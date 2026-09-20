@@ -275,7 +275,7 @@ func (s *AntigravityGatewayService) buildAntigravityCompatGeminiBody(
 			return nil, err
 		}
 		body = ensureGeminiFunctionCallThoughtSignatures(body)
-		body, err = injectIdentityPatchToGeminiRequest(body)
+		body, err = injectIdentityPatchToGeminiRequest(body, s.geminiIdentityPatchOptions(ctx))
 		if err != nil {
 			return nil, err
 		}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -78,9 +79,32 @@ var (
 )
 
 const (
-	antigravityForwardBaseURLEnv  = "GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL"
-	antigravityFallbackSecondsEnv = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
+	antigravityForwardBaseURLEnv      = "GATEWAY_ANTIGRAVITY_FORWARD_BASE_URL"
+	antigravityFallbackSecondsEnv     = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
+	antigravityEnableIdentityPatchEnv = "ANTIGRAVITY_ENABLE_IDENTITY_PATCH"
 )
+
+type geminiIdentityPatchOptions struct {
+	Enabled bool
+	Prompt  string
+}
+
+func (s *AntigravityGatewayService) geminiIdentityPatchOptions(ctx context.Context) geminiIdentityPatchOptions {
+	opts := geminiIdentityPatchOptions{Enabled: true}
+	if s != nil && s.settingService != nil {
+		opts.Enabled = s.settingService.IsIdentityPatchEnabled(ctx)
+		opts.Prompt = s.settingService.GetIdentityPatchPrompt(ctx)
+	}
+	if raw, ok := os.LookupEnv(antigravityEnableIdentityPatchEnv); ok {
+		switch strings.ToLower(strings.TrimSpace(raw)) {
+		case "0", "false", "off", "no":
+			opts.Enabled = false
+		case "1", "true", "on", "yes":
+			opts.Enabled = true
+		}
+	}
+	return opts
+}
 
 const antigravityProjectIDFallbackCredentialKey = "antigravity_project_id"
 
@@ -573,7 +597,11 @@ func extractTextFromSSEResponse(respBody []byte) string {
 
 // injectIdentityPatchToGeminiRequest 为 Gemini 格式请求注入身份提示词
 // 如果请求中已包含 "You are Antigravity" 则不重复注入
-func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
+func injectIdentityPatchToGeminiRequest(body []byte, opts geminiIdentityPatchOptions) ([]byte, error) {
+	if !opts.Enabled {
+		return body, nil
+	}
+
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return nil, fmt.Errorf("解析 Gemini 请求失败: %w", err)
@@ -595,8 +623,11 @@ func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
 		}
 	}
 
-	// 获取默认身份提示词
-	identityPatch := antigravity.GetDefaultIdentityPatch()
+	// 获取身份提示词
+	identityPatch := strings.TrimSpace(opts.Prompt)
+	if identityPatch == "" {
+		identityPatch = antigravity.GetDefaultIdentityPatch()
+	}
 
 	// 构建新的 systemInstruction
 	newPart := map[string]any{"text": identityPatch}
