@@ -2012,3 +2012,69 @@ func generateLargeUnwrapJSON(minSize int) []byte {
 	b, _ := json.Marshal(outer)
 	return b
 }
+
+func TestInjectIdentityPatchToGeminiRequest(t *testing.T) {
+	rawReq := []byte(`{"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+
+	t.Run("Enabled_false_returns_original_body", func(t *testing.T) {
+		got, err := injectIdentityPatchToGeminiRequest(rawReq, geminiIdentityPatchOptions{Enabled: false})
+		require.NoError(t, err)
+		require.Equal(t, rawReq, got)
+	})
+
+	t.Run("Enabled_true_empty_prompt_injects_default_patch", func(t *testing.T) {
+		got, err := injectIdentityPatchToGeminiRequest(rawReq, geminiIdentityPatchOptions{Enabled: true, Prompt: ""})
+		require.NoError(t, err)
+		require.Contains(t, string(got), "You are Antigravity")
+		require.Contains(t, string(got), `\u003cidentity\u003e`)
+	})
+
+	t.Run("Enabled_true_whitespace_prompt_falls_back_to_default", func(t *testing.T) {
+		got, err := injectIdentityPatchToGeminiRequest(rawReq, geminiIdentityPatchOptions{Enabled: true, Prompt: "   \t\n  "})
+		require.NoError(t, err)
+		require.Contains(t, string(got), "You are Antigravity")
+		require.Contains(t, string(got), `\u003cidentity\u003e`)
+	})
+
+	t.Run("Enabled_true_custom_prompt_injects_custom_text", func(t *testing.T) {
+		custom := "keep it short"
+		got, err := injectIdentityPatchToGeminiRequest(rawReq, geminiIdentityPatchOptions{Enabled: true, Prompt: custom})
+		require.NoError(t, err)
+		require.Contains(t, string(got), custom)
+		require.NotContains(t, string(got), `\u003cidentity\u003e`)
+	})
+
+	t.Run("Existing_antigravity_identity_skips_injection", func(t *testing.T) {
+		existing := []byte(`{"systemInstruction":{"parts":[{"text":"You are Antigravity, an advanced assistant."}]},"contents":[{"role":"user","parts":[{"text":"hello"}]}]}`)
+		got, err := injectIdentityPatchToGeminiRequest(existing, geminiIdentityPatchOptions{Enabled: true, Prompt: "custom"})
+		require.NoError(t, err)
+		require.Equal(t, existing, got)
+	})
+}
+
+func TestGeminiIdentityPatchOptions(t *testing.T) {
+	t.Run("Default_enabled_when_no_setting_service", func(t *testing.T) {
+		svc := &AntigravityGatewayService{}
+		opts := svc.geminiIdentityPatchOptions(context.Background())
+		require.True(t, opts.Enabled)
+		require.Empty(t, opts.Prompt)
+	})
+
+	t.Run("Env_var_false_disables_injection", func(t *testing.T) {
+		for _, val := range []string{"0", "false", "off", "no", "FALSE", "No"} {
+			t.Setenv(antigravityEnableIdentityPatchEnv, val)
+			svc := &AntigravityGatewayService{}
+			opts := svc.geminiIdentityPatchOptions(context.Background())
+			require.False(t, opts.Enabled, "expected disabled for %s", val)
+		}
+	})
+
+	t.Run("Env_var_true_enables_injection", func(t *testing.T) {
+		for _, val := range []string{"1", "true", "on", "yes", "TRUE", "Yes"} {
+			t.Setenv(antigravityEnableIdentityPatchEnv, val)
+			svc := &AntigravityGatewayService{}
+			opts := svc.geminiIdentityPatchOptions(context.Background())
+			require.True(t, opts.Enabled, "expected enabled for %s", val)
+		}
+	})
+}
