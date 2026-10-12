@@ -3,121 +3,65 @@ package service
 import (
 	"context"
 	"go.uber.org/zap"
-	"reflect"
+	"slices"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 )
 
-// Read existing validation state only: never prepare routes or issue model requests.
-func (s *AccountTestService) startAstraAccountScheduling() func() {
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			cycle, stop := context.WithTimeout(ctx, 5*time.Second)
-			s.syncAstraAccountScheduling(cycle)
-			stop()
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-		}
-	}()
-	return func() { cancel(); <-done }
-}
+// Deprecated: probe state is observational and must never mutate scheduling.
+func (s *AccountTestService) startAstraAccountScheduling() func() { return func() {} }
 
 func astraAccountSchedulingReady(settings config.AstraRoutingSettings, snapshot AstraGatewayRuntime, id int64, now time.Time) bool {
 	if !settings.CookiePool.Enabled || snapshot.Revision != settings.Revision {
 		return false
 	}
+	if !slices.Contains(settings.CookiePool.TargetAccountIDs, id) {
+		return false
+	}
+	if snapshot.RouteExpiresAt != nil && now.Before(*snapshot.RouteExpiresAt) {
+		return true
+	}
 	for _, row := range snapshot.Targets {
-		if row.AccountID == id {
-			return row.State == "ready" && row.Reason == "target_probe_passed" && row.ExpiresAt != nil && now.Before(*row.ExpiresAt)
+		if row.AccountID == id && row.State == "ready" && row.ExpiresAt != nil && now.Before(*row.ExpiresAt) {
+			return true
 		}
 	}
 	return false
 }
 
-func (s *AccountTestService) syncAstraAccountScheduling(ctx context.Context) {
-	settings := s.cfg.AstraRouting(ctx)
-	if !settings.AccountScheduling {
-		return
-	}
-	provider, ok := s.httpUpstream.(AstraGatewayRuntimeProvider)
-	snapshot := AstraGatewayRuntime{}
-	if ok {
-		snapshot = provider.AstraGatewaySnapshot(ctx)
-	}
-	// Serialize writes with local saves; stale work cannot act on removed targets.
-	if s.settingService != nil {
-		s.settingService.astraRoutingMu.Lock()
-		defer s.settingService.astraRoutingMu.Unlock()
-		if current := s.settingService.astraRoutingCache; current == nil || !reflect.DeepEqual(*current, settings) {
-			return
-		}
-	}
-	for _, id := range settings.CookiePool.TargetAccountIDs {
-		if ctx.Err() != nil {
-			return
-		}
-		account, err := s.accountRepo.GetByID(ctx, id)
-		if err != nil || account == nil {
-			continue
-		}
-		ready := astraAccountSchedulingReady(settings, snapshot, id, time.Now())
-		ready = ready && account.IsOpenAIOAuthLike() && account.Status == StatusActive && account.ParentAccountID == nil && (account.ExpiresAt == nil || time.Now().Before(*account.ExpiresAt))
-		fields := astraSchedulingLogFields(settings, snapshot, account, ready, time.Now())
-		action, err := applyAstraScheduling(ctx, s.accountRepo, account, settings, ready)
-		if err != nil {
-			code := "write_failed"
-			switch err.Error() {
-			case "astra_restore_conflict", "configuration_changed", "astra_model_mapping_invalid":
-				code = err.Error()
-			}
-			logger.L().Warn("astra_account_scheduling_update_failed", append(fields, zap.String("action_error", code), zap.String("mode", settings.EffectiveSchedulingMode()))...)
-			continue
-		}
-		if !action.Changed {
-			continue
-		}
-		fields = append(fields, zap.String("mode", action.Action))
-		logger.L().Info("astra_account_scheduling_changed", fields...)
-		reason := "target_not_verified"
-		for _, field := range fields {
-			if field.Key == "reason" {
-				reason = field.String
-			}
-		}
-		astraRecentScheduling.add(AstraSchedulingRecord{CheckedAt: time.Now(), AccountID: id, Schedulable: ready, Reason: reason, Mode: action.Action})
-	}
-}
+func (s *AccountTestService) syncAstraAccountScheduling(context.Context) {}
 
 // Only explicit non-secret fields: no account credentials, cookies, proxy URLs
 // or upstream errors. unchanged states never call this logger.
 func astraSchedulingLogFields(settings config.AstraRoutingSettings, snapshot AstraGatewayRuntime, account *Account, ready bool, now time.Time) []zap.Field {
-	reason := "target_not_verified"
+	reason := "source_route_unavailable"
 	gateway := ""
-	var expiry *time.Time
+	expiry := snapshot.RouteExpiresAt
 	for _, row := range snapshot.Targets {
 		if row.AccountID == account.ID {
-			gateway, expiry = row.Gateway, row.ExpiresAt
+			if expiry == nil {
+				expiry = row.ExpiresAt
+			}
+			if row.Gateway != "" {
+				gateway = row.Gateway
+			}
 			if row.Reason != "" {
 				reason = row.Reason
-			}
-			if row.State != "ready" && reason == "target_probe_passed" {
-				reason = "target_not_verified"
 			}
 			break
 		}
 	}
+	for _, row := range snapshot.Sources {
+		if row.Active {
+			gateway = row.Gateway
+			break
+		}
+	}
 	if ready {
-		reason = "target_probe_passed"
+		if reason == "source_route_unavailable" {
+			reason = "source_route_available"
+		}
 	} else if !settings.CookiePool.Enabled {
 		reason = "cookie_pool_disabled"
 	} else if snapshot.Revision != settings.Revision {

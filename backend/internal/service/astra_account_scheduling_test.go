@@ -29,57 +29,29 @@ func (r *astraSchedulingRepo) SetSchedulable(_ context.Context, id int64, enable
 	r.accounts[id].Schedulable = enabled
 	return nil
 }
-func TestAstraAccountSchedulingLifecycle(t *testing.T) {
-	settings := config.AstraRoutingSettings{AccountScheduling: true, Revision: "one", CookiePool: config.CodexGatewayPinConfig{Enabled: true, SourceAccountIDs: []int64{299}, TargetAccountIDs: []int64{300}}}
-	cfg := &config.Config{}
-	cfg.SetAstraRoutingLoader(func(context.Context) config.AstraRoutingSettings { return settings })
-	source := &Account{ID: 299, Schedulable: true}
-	target := &Account{ID: 300, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive, Schedulable: true}
-	repo := &astraSchedulingRepo{accounts: map[int64]*Account{299: source, 300: target}}
-	provider := &astraSetupUpstream{snapshot: AstraGatewayRuntime{Revision: "one"}}
-	svc := &AccountTestService{cfg: cfg, accountRepo: repo, httpUpstream: provider}
-	// No target pass: disable even if source has passed. No HTTP/preparation mock
-	// exists: accidentally probing would panic rather than silently pass.
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable)
-	require.True(t, source.Schedulable)
-	expiry := time.Now().Add(time.Minute)
-	provider.snapshot.Targets = []AstraRouteStatus{{AccountID: 300, State: "ready", Reason: "target_probe_passed", ExpiresAt: &expiry}}
-	svc.syncAstraAccountScheduling(t.Context())
-	require.True(t, target.Schedulable)
-	svc.syncAstraAccountScheduling(t.Context())
-	require.Len(t, repo.writes, 2, "unchanged state does not write")
-	expiry = time.Now().Add(-time.Second)
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable, "expiry handled without a browser or request")
-	expiry = time.Now().Add(time.Minute)
-	svc.syncAstraAccountScheduling(t.Context())
-	require.True(t, target.Schedulable, "a new valid result restores scheduling")
-	provider.snapshot.Targets[0].State = "rejected"
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable, "29/failure closes scheduling")
-	provider.snapshot.Targets[0].State = "ready"
-	settings.AccountScheduling = false
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable, "off switch preserves current flags")
-	settings.AccountScheduling = true
-	provider.snapshot.Revision = "old"
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable, "old configuration is not evidence")
-	provider.snapshot.Revision = "one"
-	repo.fail = true
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable)
-	repo.fail = false
-	svc.syncAstraAccountScheduling(t.Context())
-	require.True(t, target.Schedulable, "failed writes retry")
-	target.Status = "error"
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable, "inactive accounts never revived")
-	target.Status = StatusActive
-	settings.CookiePool.Enabled = false
-	svc.syncAstraAccountScheduling(t.Context())
-	require.False(t, target.Schedulable)
+func TestAstraAccountSchedulingIgnoresProbeState(t *testing.T) {
+	for _, mode := range []string{"account", "model", "groups"} {
+		t.Run(mode, func(t *testing.T) {
+			settings := config.AstraRoutingSettings{AccountScheduling: true, SchedulingMode: mode, Revision: "one", CookiePool: config.CodexGatewayPinConfig{Enabled: true, TargetAccountIDs: []int64{300}}}
+			cfg := &config.Config{}
+			cfg.SetAstraRoutingLoader(func(context.Context) config.AstraRoutingSettings { return settings })
+			target := &Account{ID: 300, Schedulable: true, Platform: PlatformOpenAI, Type: AccountTypeOAuth, Status: StatusActive}
+			repo := &astraModeRepo{astraSchedulingRepo: astraSchedulingRepo{accounts: map[int64]*Account{300: target}}}
+			upstream := &astraSetupUpstream{}
+			svc := &AccountTestService{cfg: cfg, accountRepo: repo, httpUpstream: upstream}
+			for _, reason := range []string{"target_not_verified", "source_probe_cooldown", "target_probe_failed", "target_probe_degraded", "route_expired", "target_probe_passed"} {
+				upstream.snapshot = AstraGatewayRuntime{Revision: "one", Targets: []AstraRouteStatus{{AccountID: 300, Reason: reason}}}
+				svc.syncAstraAccountScheduling(t.Context())
+				require.True(t, target.Schedulable)
+				target.Schedulable = false
+				svc.syncAstraAccountScheduling(t.Context())
+				require.False(t, target.Schedulable)
+				target.Schedulable = true
+			}
+			require.Zero(t, repo.calls)
+			require.Empty(t, repo.writes)
+		})
+	}
 }
 
 func TestAstraSchedulingTogglePreservesRevisionAndSkipsPreparation(t *testing.T) {

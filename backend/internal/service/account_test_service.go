@@ -1075,7 +1075,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if isOAuth && s.accountRepo != nil {
+	if isOAuth && s.accountRepo != nil && !IsAstraSourceAcquisition(ctx) {
 		if updates, err := extractOpenAICodexProbeUpdates(resp); err == nil && len(updates) > 0 {
 			_ = s.accountRepo.UpdateExtra(ctx, account.ID, updates)
 			mergeAccountExtra(account, updates)
@@ -1097,7 +1097,7 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 			s.reconcileOpenAI429State(ctx, account, resp.Header, body)
 		}
 		// 401 Unauthorized: 标记账号为永久错误
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
+		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil && !IsAstraSourceAcquisition(ctx) {
 			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
 			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
 		}
@@ -2603,6 +2603,10 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 }
 
 func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, account *Account, headers http.Header, body []byte) {
+	// Route collection is observational, including upstream authentication and quota failures.
+	if IsAstraSourceAcquisition(ctx) {
+		return
+	}
 	if s == nil || s.accountRepo == nil || account == nil {
 		return
 	}
