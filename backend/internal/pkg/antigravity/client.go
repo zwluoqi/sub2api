@@ -233,7 +233,7 @@ func TierIDToPlanType(tierID string) string {
 		return "Free"
 	case "g1-pro-tier":
 		return "Pro"
-	case "g1-ultra-tier":
+	case "g1-ultra-tier", "g1-ultra-lite-tier":
 		return "Ultra"
 	default:
 		if tierID == "" {
