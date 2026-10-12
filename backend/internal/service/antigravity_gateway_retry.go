@@ -79,7 +79,7 @@ func accountHasAntigravityPaidTier(account *Account) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(planType)) {
-	case "pro", "ultra":
+	case "pro", "ultra", "g1-ultra-lite-tier":
 		return true
 	default:
 		return false

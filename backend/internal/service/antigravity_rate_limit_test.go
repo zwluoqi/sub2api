@@ -1072,6 +1072,19 @@ func TestResolveAntigravityForwardBaseURL(t *testing.T) {
 			want: dailyURL,
 		},
 		{name: "free defaults to prod", account: &Account{Credentials: map[string]any{"plan_type": "free"}}, want: prodURL},
+		{
+			name: "raw ultra lite defaults to daily", account: &Account{Credentials: map[string]any{"plan_type": "g1-ultra-lite-tier"}},
+			want: dailyURL,
+		},
+		{
+			name: "raw ultra lite ignores case and whitespace", account: &Account{Credentials: map[string]any{"plan_type": " G1-ULTRA-LITE-TIER "}},
+			want: dailyURL,
+		},
+		{
+			name: "prod override wins for raw ultra lite", env: " PROD ",
+			account: &Account{Credentials: map[string]any{"plan_type": "g1-ultra-lite-tier"}},
+			want:    prodURL,
+		},
 		{name: "abnormal defaults to prod", account: &Account{Credentials: map[string]any{"plan_type": "Abnormal"}}, want: prodURL},
 		{name: "unknown defaults to prod", account: &Account{Credentials: map[string]any{"plan_type": "enterprise"}}, want: prodURL},
 		{name: "malformed defaults to prod", account: &Account{Credentials: map[string]any{"plan_type": map[string]any{"name": "pro"}}}, want: prodURL},

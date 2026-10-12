@@ -52,6 +52,35 @@ func TestNormalizeAntigravitySubscription_NilResponse(t *testing.T) {
 	assert.Equal(t, "Free", result.PlanType)
 }
 
+func TestNormalizeAntigravitySubscription_UltraLite(t *testing.T) {
+	tests := []struct {
+		name string
+		resp *antigravity.LoadCodeAssistResponse
+	}{
+		{
+			name: "paid tier takes precedence",
+			resp: &antigravity.LoadCodeAssistResponse{
+				PaidTier:    &antigravity.PaidTierInfo{ID: "g1-ultra-lite-tier"},
+				CurrentTier: &antigravity.TierInfo{ID: "free-tier"},
+			},
+		},
+		{
+			name: "current tier fallback",
+			resp: &antigravity.LoadCodeAssistResponse{
+				CurrentTier: &antigravity.TierInfo{ID: "g1-ultra-lite-tier"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := NormalizeAntigravitySubscription(tt.resp)
+			assert.Equal(t, "Ultra", result.PlanType)
+			assert.Empty(t, result.SubscriptionStatus)
+			assert.Empty(t, result.SubscriptionError)
+		})
+	}
+}
+
 func TestNormalizeAntigravitySubscription_NoTierWithIneligible(t *testing.T) {
 	resp := &antigravity.LoadCodeAssistResponse{
 		IneligibleTiers: []*antigravity.IneligibleTier{
