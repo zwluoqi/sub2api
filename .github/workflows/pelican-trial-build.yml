@@ -1,7 +1,5 @@
 name: Pelican trial validation and artifact
 on:
-  push:
-    branches: [feat/pelican-schedule]
   workflow_dispatch:
 concurrency:
   group: pelican-trial-${{ github.ref }}

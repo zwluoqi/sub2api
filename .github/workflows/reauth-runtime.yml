@@ -1,21 +1,5 @@
 name: Re-login runtime
 on:
-  pull_request:
-    paths:
-      - 'tools/openai_oauth_reauth_worker.py'
-      - 'tools/openai_totp_*'
-      - 'tools/test_openai_totp_*'
-      - 'tools/openai_excel_oauth_adapter.py'
-      - 'tools/openai_excel_2fa_login.py'
-      - 'tools/openai_excel_password_flow.mjs'
-      - 'tools/test_openai_excel_password_flow.mjs'
-      - 'tools/test_openai_excel_oauth_adapter.py'
-      - 'tools/test_openai_oauth_reauth_worker.py'
-      - 'tools/test_openai_oauth_reauth_engines.py'
-      - 'tools/test_openai_oauth_reauth_runtime_controls.py'
-      - 'tools/reauth-runtime/**'
-      - 'backend/internal/reauthruntime/**'
-      - '.github/workflows/reauth-runtime.yml'
   workflow_dispatch:
 permissions:
   contents: read

@@ -1,7 +1,5 @@
 name: Request timing validation and artifact
 on:
-  push:
-    branches: [feat/request-latency-details, feat/timing-health-colors, production]
   workflow_dispatch:
 concurrency:
   group: request-timing-build-${{ github.ref }}
