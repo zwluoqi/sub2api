@@ -113,9 +113,13 @@ func ProvideOpenAIOAuthService(
 	proxyRepo ProxyRepository,
 	oauthClient OpenAIOAuthClient,
 	privacyClientFactory PrivacyClientFactory,
+	sessionCookies OpenAISessionCookieRepository,
+	encryptor SecretEncryptor,
+	cfg *config.Config,
 ) *OpenAIOAuthService {
 	svc := NewOpenAIOAuthService(proxyRepo, oauthClient)
 	svc.SetPrivacyClientFactory(privacyClientFactory)
+	svc.SetSessionCookieStorage(sessionCookies, encryptor, cfg != nil && cfg.Totp.EncryptionKeyConfigured)
 	return svc
 }
 
