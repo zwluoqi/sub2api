@@ -35,6 +35,7 @@ type UpdateSettingsRequest struct {
 	PrismBrowserAPIKey                string                           `json:"prism_browser_api_key"`
 	// 注册设置
 	RegistrationEnabled                 bool                         `json:"registration_enabled"`
+	LoginRateLimitEnabled               *bool                        `json:"login_rate_limit_enabled"` // 省略=保持现值
 	EmailVerifyEnabled                  bool                         `json:"email_verify_enabled"`
 	RegistrationEmailSuffixWhitelist    []string                     `json:"registration_email_suffix_whitelist"`
 	RegistrationEmailDomainQuotaEnabled *bool                        `json:"registration_email_domain_quota_enabled"` // 非白名单域名限量注册开关（省略=保持现值）
@@ -417,28 +418,29 @@ type UpdateSettingsRequest struct {
 	AuthSourceGooglePlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_google_platform_quotas"`
 	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
 
-	AllowUserViewErrorRequests    *bool   `json:"allow_user_view_error_requests"`
-	UsageShowLongContextBadge     *bool   `json:"usage_show_long_context_badge"`
-	UsageShowCacheRate            *bool   `json:"usage_show_cache_rate"`
-	UsageShowCacheRateToUsers     *bool   `json:"usage_show_cache_rate_to_users"`
-	RequestCaptureEnabled         *bool   `json:"request_capture_enabled"`
-	RequestCaptureQuotaMiB        *int64  `json:"request_capture_quota_mib"`
-	RequestCaptureRetentionDays   *int    `json:"request_capture_retention_days"`
-	ExcelBPSImageMode             *string `json:"excel_bps_image_mode"`
-	ExcelBPSImageRelayEnabled     *bool   `json:"excel_bps_image_relay_enabled"`
-	ExcelBPSImageBaseURL          *string `json:"excel_bps_image_base_url"`
-	ExcelBPSImageBodyLimitMiB     *int    `json:"excel_bps_image_body_limit_mib"`
-	ExcelBPSImageBudgetMiB        *int    `json:"excel_bps_image_budget_mib"`
-	ExcelBPSImageMaxRequests      *int    `json:"excel_bps_image_max_requests"`
-	ExcelBPSImageMaxImageMiB      *int    `json:"excel_bps_image_max_image_mib"`
-	ExcelBPSImageMaxImages        *int    `json:"excel_bps_image_max_images"`
-	ExcelBPSImageLimitPolicy      *string `json:"excel_bps_image_limit_policy"`
-	ExcelBPSImageWarningRemaining *int    `json:"excel_bps_image_warning_remaining"`
-	ExcelBPSImageCompactReserve   *int    `json:"excel_bps_image_compact_reserve"`
-	ExcelBPSImageMaxTotalMiB      *int    `json:"excel_bps_image_max_total_mib"`
-	ExcelBPSImageStorageMiB       *int    `json:"excel_bps_image_storage_mib"`
-	ExcelBPSImageStorageEntries   *int    `json:"excel_bps_image_storage_entries"`
-	ExcelBPSImageTTLMinutes       *int    `json:"excel_bps_image_ttl_minutes"`
+	AllowUserViewErrorRequests            *bool   `json:"allow_user_view_error_requests"`
+	UsageShowLongContextBadge             *bool   `json:"usage_show_long_context_badge"`
+	UsageShowCacheRate                    *bool   `json:"usage_show_cache_rate"`
+	UsageShowCacheRateToUsers             *bool   `json:"usage_show_cache_rate_to_users"`
+	UsageShowUpstreamResponseModelToUsers *bool   `json:"usage_show_upstream_response_model_to_users"`
+	RequestCaptureEnabled                 *bool   `json:"request_capture_enabled"`
+	RequestCaptureQuotaMiB                *int64  `json:"request_capture_quota_mib"`
+	RequestCaptureRetentionDays           *int    `json:"request_capture_retention_days"`
+	ExcelBPSImageMode                     *string `json:"excel_bps_image_mode"`
+	ExcelBPSImageRelayEnabled             *bool   `json:"excel_bps_image_relay_enabled"`
+	ExcelBPSImageBaseURL                  *string `json:"excel_bps_image_base_url"`
+	ExcelBPSImageBodyLimitMiB             *int    `json:"excel_bps_image_body_limit_mib"`
+	ExcelBPSImageBudgetMiB                *int    `json:"excel_bps_image_budget_mib"`
+	ExcelBPSImageMaxRequests              *int    `json:"excel_bps_image_max_requests"`
+	ExcelBPSImageMaxImageMiB              *int    `json:"excel_bps_image_max_image_mib"`
+	ExcelBPSImageMaxImages                *int    `json:"excel_bps_image_max_images"`
+	ExcelBPSImageLimitPolicy              *string `json:"excel_bps_image_limit_policy"`
+	ExcelBPSImageWarningRemaining         *int    `json:"excel_bps_image_warning_remaining"`
+	ExcelBPSImageCompactReserve           *int    `json:"excel_bps_image_compact_reserve"`
+	ExcelBPSImageMaxTotalMiB              *int    `json:"excel_bps_image_max_total_mib"`
+	ExcelBPSImageStorageMiB               *int    `json:"excel_bps_image_storage_mib"`
+	ExcelBPSImageStorageEntries           *int    `json:"excel_bps_image_storage_entries"`
+	ExcelBPSImageTTLMinutes               *int    `json:"excel_bps_image_ttl_minutes"`
 }
 
 // UpdateSettings 更新系统设置
@@ -634,7 +636,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	// 两个安全开关的请求字段为指针：省略字段=保持现值，避免旧客户端/脚本
+	// 安全开关的请求字段为指针：省略字段=保持现值，避免旧客户端/脚本
 	// 用不含新字段的全量 payload 保存设置时把安全开关静默重置。
 	sessionBindingEnabled := previousSettings.SessionBindingEnabled
 	if req.SessionBindingEnabled != nil {
@@ -643,6 +645,10 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	stepUpEnabled := previousSettings.StepUpEnabled
 	if req.StepUpEnabled != nil {
 		stepUpEnabled = *req.StepUpEnabled
+	}
+	loginRateLimitEnabled := previousSettings.LoginRateLimitEnabled
+	if req.LoginRateLimitEnabled != nil {
+		loginRateLimitEnabled = *req.LoginRateLimitEnabled
 	}
 	passkeyEnabled := previousSettings.PasskeyEnabled
 	if req.PasskeyEnabled != nil {
@@ -1646,6 +1652,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AccountSchedulingThresholds: req.AccountSchedulingThresholds,
 
 		RegistrationEnabled:                 req.RegistrationEnabled,
+		LoginRateLimitEnabled:               loginRateLimitEnabled,
 		PrismBrowserEnabled:                 req.PrismBrowserEnabled,
 		PrismBrowserBaseURL:                 req.PrismBrowserBaseURL,
 		PrismBrowserAPIKey:                  req.PrismBrowserAPIKey,
@@ -1928,6 +1935,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 				return *req.UsageShowCacheRateToUsers
 			}
 			return previousSettings.UsageShowCacheRateToUsers
+		}(),
+		UsageShowUpstreamResponseModelToUsers: func() bool {
+			if req.UsageShowUpstreamResponseModelToUsers != nil {
+				return *req.UsageShowUpstreamResponseModelToUsers
+			}
+			return previousSettings.UsageShowUpstreamResponseModelToUsers
 		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
@@ -2552,6 +2565,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 	payload := dto.SystemSettings{
 		RegistrationEnabled:                                    updatedSettings.RegistrationEnabled,
+		LoginRateLimitEnabled:                                  updatedSettings.LoginRateLimitEnabled,
 		PrismBrowserEnabled:                                    updatedSettings.PrismBrowserEnabled,
 		PrismBrowserBaseURL:                                    updatedSettings.PrismBrowserBaseURL,
 		PrismBrowserAPIKeyConfigured:                           updatedSettings.PrismBrowserAPIKeyConfigured,
@@ -2833,25 +2847,26 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
-		RiskControlEnabled:                updatedSettings.RiskControlEnabled,
-		CyberSessionBlockEnabled:          updatedSettings.CyberSessionBlockEnabled,
-		CyberSessionBlockTTLSeconds:       updatedSettings.CyberSessionBlockTTLSeconds,
-		CyberSessionIdentityStrictEnabled: updatedSettings.CyberSessionIdentityStrictEnabled,
-		AccountSchedulingThresholds:       updatedSettings.AccountSchedulingThresholds,
-		AllowUserViewErrorRequests:        updatedSettings.AllowUserViewErrorRequests,
-		UsageShowLongContextBadge:         updatedSettings.UsageShowLongContextBadge,
-		UsageShowCacheRate:                updatedSettings.UsageShowCacheRate,
-		UsageShowCacheRateToUsers:         updatedSettings.UsageShowCacheRateToUsers,
-		RequestCaptureEnabled:             updatedSettings.RequestCaptureEnabled,
-		RequestCaptureQuotaMiB:            updatedSettings.RequestCaptureQuotaMiB,
-		RequestCaptureRetentionDays:       updatedSettings.RequestCaptureRetentionDays,
-		ExcelBPSImageMode:                 updatedSettings.ExcelBPSImageMode,
-		ExcelBPSImageRelayEnabled:         updatedSettings.ExcelBPSImageRelayEnabled,
-		ExcelBPSImageMaxImageMiB:          updatedSettings.ExcelBPSImageMaxImageMiB,
-		ExcelBPSImageMaxImages:            updatedSettings.ExcelBPSImageMaxImages,
-		ExcelBPSImageLimitPolicy:          updatedSettings.ExcelBPSImageLimitPolicy,
-		ExcelBPSImageWarningRemaining:     updatedSettings.ExcelBPSImageWarningRemaining,
-		ExcelBPSImageCompactReserve:       updatedSettings.ExcelBPSImageCompactReserve,
+		RiskControlEnabled:                    updatedSettings.RiskControlEnabled,
+		CyberSessionBlockEnabled:              updatedSettings.CyberSessionBlockEnabled,
+		CyberSessionBlockTTLSeconds:           updatedSettings.CyberSessionBlockTTLSeconds,
+		CyberSessionIdentityStrictEnabled:     updatedSettings.CyberSessionIdentityStrictEnabled,
+		AccountSchedulingThresholds:           updatedSettings.AccountSchedulingThresholds,
+		AllowUserViewErrorRequests:            updatedSettings.AllowUserViewErrorRequests,
+		UsageShowLongContextBadge:             updatedSettings.UsageShowLongContextBadge,
+		UsageShowCacheRate:                    updatedSettings.UsageShowCacheRate,
+		UsageShowCacheRateToUsers:             updatedSettings.UsageShowCacheRateToUsers,
+		UsageShowUpstreamResponseModelToUsers: updatedSettings.UsageShowUpstreamResponseModelToUsers,
+		RequestCaptureEnabled:                 updatedSettings.RequestCaptureEnabled,
+		RequestCaptureQuotaMiB:                updatedSettings.RequestCaptureQuotaMiB,
+		RequestCaptureRetentionDays:           updatedSettings.RequestCaptureRetentionDays,
+		ExcelBPSImageMode:                     updatedSettings.ExcelBPSImageMode,
+		ExcelBPSImageRelayEnabled:             updatedSettings.ExcelBPSImageRelayEnabled,
+		ExcelBPSImageMaxImageMiB:              updatedSettings.ExcelBPSImageMaxImageMiB,
+		ExcelBPSImageMaxImages:                updatedSettings.ExcelBPSImageMaxImages,
+		ExcelBPSImageLimitPolicy:              updatedSettings.ExcelBPSImageLimitPolicy,
+		ExcelBPSImageWarningRemaining:         updatedSettings.ExcelBPSImageWarningRemaining,
+		ExcelBPSImageCompactReserve:           updatedSettings.ExcelBPSImageCompactReserve,
 
 		ExcelBPSImageMaxTotalMiB:    updatedSettings.ExcelBPSImageMaxTotalMiB,
 		ExcelBPSImageStorageMiB:     updatedSettings.ExcelBPSImageStorageMiB,

@@ -34,6 +34,7 @@ backend/.gocache/
 # ===================
 node_modules/
 frontend/node_modules/
+.pnpm-store/
 frontend/dist/
 *.local
 *.tsbuildinfo
@@ -133,9 +134,11 @@ deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
 docs/*
+!docs/ip-risk-control.md
 !docs/openai-ws-sse-acceleration.md
 !docs/openai-outbound-identity.md
 !docs/openai-2fa-dual-oauth.md
+!docs/openai-siwc.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
@@ -146,8 +149,11 @@ docs/*
 !docs/PLUGIN_DEVELOPMENT.md
 !docs/channel-monitor-v2-safe-defaults.md
 !docs/quality-bps-observation.md
+!docs/modeltrace-tests.md
 !docs/cyber-session-blocking.md
 !docs/request-capture.md
+!docs/gateway-transport-diagnostics.md
+!docs/chat-responses-bridge-recovery.md
 !docs/codex-credits.md
 !docs/account-token-guard.md
 !docs/priority-scheduling.md
@@ -176,6 +182,7 @@ issues/
 **/.credential-key-*
 !docs/credential-encryption.md
 !docs/new-api-upstream-probe.md
+!docs/minimax-h3-video-relay.md
 !docs/account-ops-notifications.md
 
 !docs/typesafe-jev.md
@@ -200,3 +207,6 @@ issues/
 /docs/screenshots/**/*.webp
 /docs/screenshots/**/*.avif
 /docs/screenshots/**/*.svg
+
+# Local macOS re-auth Worker runtime (ephemeral, never commit)
+tools/local-worker/

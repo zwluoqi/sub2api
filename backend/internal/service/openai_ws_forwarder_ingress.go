@@ -607,6 +607,9 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		return admissionErr
 	}
 	account = latest
+	if account.IsSIWCEnabled() {
+		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "SIWC accounts require HTTP/SSE", nil)
+	}
 	if account.IsPrismBrowserEnabledForModel(extractOpenAICodexTicketModel(firstClientMessage)) && s.prismBrowserGloballyEnabled(ctx) {
 		return NewOpenAIWSClientCloseError(coderws.StatusPolicyViolation, "Prism accounts require HTTP/SSE", nil)
 	}
@@ -648,6 +651,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 
 	wsDecision := s.getOpenAIWSProtocolResolver().Resolve(account)
+	ctx = withOpenAITransportRoute(ctx, "websocket", "ctx_pool", wsDecision.Reason, "")
 	// One reader owns the downstream socket for the whole connection. A
 	// passthrough attempt consumes cancel/overlap frames through it, established
 	// native/bridge only needs its disconnect signal, and the first-turn wait
@@ -1174,6 +1178,18 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	refreshIngressRouteState(firstPayload)
 
 	if useHTTPBridge {
+		bridgeReason := "payload_threshold_http_bridge"
+		switch {
+		case account.Platform == PlatformGrok:
+			bridgeReason = "platform_http_bridge"
+		case s.pluginManager != nil && s.pluginManager.ShouldRouteOpenAIOAuth(account):
+			bridgeReason = "plugin_http_bridge"
+		case ingressMode == OpenAIWSIngressModeHTTPBridge:
+			bridgeReason = "account_mode_http_bridge"
+		case forceHTTPBridge:
+			bridgeReason = "passthrough_payload_http_bridge"
+		}
+		ctx = withOpenAITransportRoute(ctx, "websocket", "http_bridge", bridgeReason, "")
 		logOpenAIWSModeInfo(
 			"ingress_ws_http_bridge_start account_id=%d account_type=%s payload_bytes=%d threshold_bytes=%d has_session_hash=%v store_disabled=%v",
 			account.ID,
@@ -1436,7 +1452,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		WSURL:   wsURL,
 		Headers: wsHeaders,
 		HeadersFactory: func(factoryCtx context.Context, headers http.Header) (http.Header, error) {
-			latest, err := s.admitOpenAITurnForGroup(factoryCtx, groupID, enforceGroup, account, firstRoutingFields[0].String())
+			latest, err := s.admitOpenAITurnForGroup(factoryCtx, groupID, enforceGroup, account, firstRoutingFields[0].String(), firstPayload.payloadRaw)
 			if err != nil {
 				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 					factoryCtx,
@@ -1465,7 +1481,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 			return s.bindOpenAIWSHandshake(account, firstRoutingFields[0].String(), headers)
 		},
 		CheckBinding: func(checkCtx context.Context, binding *openAIWSTurnBinding) error {
-			latest, err := s.admitOpenAITurnForGroup(checkCtx, groupID, enforceGroup, account, firstRoutingFields[0].String())
+			latest, err := s.admitOpenAITurnForGroup(checkCtx, groupID, enforceGroup, account, firstRoutingFields[0].String(), firstPayload.payloadRaw)
 			if err != nil {
 				s.invalidateOpenAIWSTurnStateAfterAdmissionFailure(
 					checkCtx,
@@ -1666,7 +1682,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		if lease == nil {
 			return nil, errors.New("upstream websocket lease is nil")
 		}
-		latest, admissionErr := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(payload))
+		latest, admissionErr := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(payload), payload)
 		if admissionErr == nil {
 			admissionErr = s.checkOpenAIWSBinding(latest, extractOpenAICodexTicketModel(payload), lease.conn.turnBinding)
 		}
@@ -2200,7 +2216,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 	}
 	for {
 		// Always run, even when recovery deliberately skips billing hooks.
-		if _, err := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(currentPayload)); err != nil {
+		if _, err := s.admitOpenAITurn(ctx, c, account, extractOpenAICodexTicketModel(currentPayload), currentPayload); err != nil {
 			if sessionLease != nil {
 				sessionLease.MarkBroken()
 			}

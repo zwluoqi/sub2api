@@ -26,6 +26,9 @@
         <p class="input-hint">{{ t('admin.accounts.notesHint') }}</p>
       </div>
 
+      <SIWCAccountSettings v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow"
+        v-model:enabled="siwcEnabled" :account-id="account.id" :active="show" />
+
       <div v-if="account.platform === 'openai' && account.type === 'oauth' && !isSparkShadow" class="rounded-lg bg-gray-50 p-3 dark:bg-dark-800">
         <label class="flex items-center gap-2 text-sm"><input v-model="openaiModelAliases" type="checkbox" data-testid="openai-model-aliases" />{{ t('priorityScheduling.modelAliases') }}</label>
         <p class="input-hint">{{ t('priorityScheduling.modelAliasesHint') }}</p>
@@ -1882,7 +1885,7 @@
                 {{ t('admin.accounts.upstreamBilling.syncRate') }}
               </p>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                {{ t('admin.accounts.upstreamBilling.syncRateHint') }}
+                {{ t(account?.extra?.upstream_billing_probe?.data?.billing_mode === 'multi_group' ? 'admin.accounts.upstreamBilling.multiGroupSyncPaused' : 'admin.accounts.upstreamBilling.syncRateHint') }}
               </p>
             </div>
             <Toggle
@@ -2474,6 +2477,36 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 anthropicPassthroughEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- Anthropic API Key 抹除 Claude Code 身份开关 -->
+      <div
+        v-if="account?.platform === 'anthropic' && account?.type === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.stripClaudeCodeIdentity') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.stripClaudeCodeIdentityDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            @click="anthropicStripClaudeCodeIdentityEnabled = !anthropicStripClaudeCodeIdentityEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              anthropicStripClaudeCodeIdentityEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                anthropicStripClaudeCodeIdentityEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -3431,6 +3464,7 @@
 
 <script setup lang="ts">
 import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
+import SIWCAccountSettings from './SIWCAccountSettings.vue'
 import ExcelBPSCredentialStatus from './ExcelBPSCredentialStatus.vue'
 import { DEFAULT_ACCOUNT_COST_MULTIPLIER, isValidAccountCostMultiplier, readAccountCostMultiplier } from '@/utils/accountCost'
 
@@ -3573,6 +3607,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const siwcEnabled = ref(false)
 const appStore = useAppStore()
 const authStore = useAuthStore()
 const globalBpsEnabled = computed(() => appStore.cachedPublicSettings?.excel_bps_enabled !== false)
@@ -4171,6 +4206,7 @@ type CodexImageToolMode = 'inherit' | 'enabled' | 'disabled' | 'block'
 const codexImageToolMode = ref<CodexImageToolMode>('inherit')
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
+const anthropicStripClaudeCodeIdentityEnabled = ref(false)
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -4662,6 +4698,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     extra?.upstream_billing_provider !== 'new_api' && upstreamBillingAutoProbeEnabled.value && extra?.upstream_billing_rate_sync_enabled === true
 
   // Load OpenAI passthrough toggle (OpenAI OAuth/SetupToken/API Key)
+  siwcEnabled.value = false
   excelBPSEnabled.value = false
   excelBPSMode.value = 'initial'
   excelBPSAllModels.value = false
@@ -4696,6 +4733,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexFingerprintMode.value = 'off'
   codexImageToolMode.value = 'inherit'
   anthropicPassthroughEnabled.value = false
+  anthropicStripClaudeCodeIdentityEnabled.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'setup-token' || newAccount.type === 'apikey')) {
@@ -4705,6 +4743,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
         ? extra.openai_prism_browser_models.filter((model): model is string => typeof model === 'string' && prismSupportedModels.includes(model))
         : []
     }
+    siwcEnabled.value = extra?.openai_siwc === true
     excelBPSEnabled.value = newAccount.type === 'oauth' && extra?.openai_excel_bps === true
     excelBPSMode.value = extra?.openai_excel_bps_config_mode === 'defaults' ? 'defaults' : 'initial'
     excelBPSAllModels.value = excelBPSEnabled.value && !Object.prototype.hasOwnProperty.call(extra ?? {}, 'openai_excel_bps_models')
@@ -4788,6 +4827,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   }
   if (newAccount.platform === 'anthropic' && newAccount.type === 'apikey') {
     anthropicPassthroughEnabled.value = extra?.anthropic_passthrough === true
+    anthropicStripClaudeCodeIdentityEnabled.value = extra?.anthropic_strip_claude_code_identity === true
     anthropicAPIKeyAuthScheme.value = extra?.anthropic_apikey_auth_scheme === 'authorization_bearer'
       ? 'authorization_bearer'
       : 'x_api_key'
@@ -6282,6 +6322,11 @@ const handleSubmit = async () => {
       } else {
         delete newExtra.anthropic_passthrough
       }
+      if (anthropicStripClaudeCodeIdentityEnabled.value) {
+        newExtra.anthropic_strip_claude_code_identity = true
+      } else {
+        delete newExtra.anthropic_strip_claude_code_identity
+      }
       if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
         newExtra.anthropic_apikey_auth_scheme = 'authorization_bearer'
       } else {
@@ -6299,6 +6344,7 @@ const handleSubmit = async () => {
     if (props.account.platform === 'openai' && (props.account.type === 'oauth' || props.account.type === 'setup-token' || props.account.type === 'apikey')) {
       const currentExtra = (props.account.extra as Record<string, unknown>) || {}
       const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (props.account.type === 'oauth' && !isSparkShadow.value) newExtra.openai_siwc = siwcEnabled.value
       newExtra.openai_request_timezone = openAIRequestTimezone.value
       if (props.account.type === 'oauth') {
         applyAccountRPMSettings(newExtra, {

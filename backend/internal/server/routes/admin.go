@@ -413,6 +413,9 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.GET("/:id", h.Admin.Account.GetByID)
 		if h.Admin.OpenAIOAuthReauth != nil {
 			accounts.GET("/:id/openai-reauth", h.Admin.OpenAIOAuthReauth.GetStatus)
+			accounts.GET("/:id/siwc", h.Admin.OpenAIOAuthReauth.SIWCStatus)
+			accounts.POST("/:id/siwc/authorize", h.Admin.OpenAIOAuthReauth.BeginSIWC)
+			accounts.POST("/:id/siwc/callback", h.Admin.OpenAIOAuthReauth.CompleteSIWC)
 			accounts.GET("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotationStatus)
 			accounts.POST("/:id/totp-rotation", h.Admin.OpenAIOAuthReauth.RotateTOTP)
 			accounts.POST("/:id/totp-rotation/verify", h.Admin.OpenAIOAuthReauth.RetryTOTP)
@@ -446,6 +449,7 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		accounts.DELETE("/:id", h.Admin.Account.Delete)
 		accounts.POST("/:id/test", h.Admin.Account.Test)
 		accounts.POST("/:id/pelican-test", h.Admin.Account.PelicanTest)
+		accounts.POST("/:id/modeltrace-test", h.Admin.Account.ModelTraceTest)
 		accounts.POST("/:id/state-probe", h.Admin.Account.StateProbe)
 		accounts.POST("/:id/recover-state", h.Admin.Account.RecoverState)
 		accounts.POST("/:id/refresh", h.Admin.Account.Refresh)
@@ -472,8 +476,8 @@ func registerAccountRoutes(admin *gin.RouterGroup, h *handler.Handlers, stepUpAu
 		// 账号导出泄露上游凭证原文——要求 step-up 2FA
 		accounts.GET("/data", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportData)
 		accounts.POST("/:id/export-session", gin.HandlerFunc(stepUpAuth), h.Admin.Account.ExportOpenAISession)
-		accounts.GET("/:id/session-cookie", h.Admin.Account.GetOpenAISessionCookie)
-		accounts.DELETE("/:id/session-cookie", gin.HandlerFunc(stepUpAuth), h.Admin.Account.DeleteOpenAISessionCookie)
+		accounts.GET("/:id/export-session/:task_id", h.Admin.Account.GetOpenAISessionExportTask)
+		accounts.GET("/:id/export-session/:task_id/download", gin.HandlerFunc(stepUpAuth), h.Admin.Account.DownloadOpenAISessionExport)
 		accounts.POST("/data", h.Admin.Account.ImportData)
 		accounts.POST("/batch-update-credentials", h.Admin.Account.BatchUpdateCredentials)
 		accounts.POST("/batch-refresh-tier", h.Admin.Account.BatchRefreshTier)
@@ -502,6 +506,10 @@ func registerOpenAIOAuthReauthWorkerRoutes(v1 *gin.RouterGroup, h *handler.Handl
 	worker := v1.Group("/internal/openai-reauth")
 	{
 		worker.POST("/claim", h.Admin.OpenAIOAuthReauth.Claim)
+		worker.POST("/session-export/claim", h.Admin.OpenAIOAuthReauth.ClaimSessionExport)
+		worker.POST("/:task_id/session-export/progress", h.Admin.OpenAIOAuthReauth.SessionExportProgress)
+		worker.POST("/:task_id/session-export/result", h.Admin.OpenAIOAuthReauth.SessionExportResult)
+		worker.POST("/:task_id/session-export/fail", h.Admin.OpenAIOAuthReauth.SessionExportFail)
 		worker.POST("/totp-claim", h.Admin.OpenAIOAuthReauth.ClaimTOTP)
 		worker.POST("/:task_id/totp-phase", h.Admin.OpenAIOAuthReauth.TOTPPhase)
 		worker.POST("/:task_id/totp-finish", h.Admin.OpenAIOAuthReauth.TOTPFinish)
@@ -657,6 +665,13 @@ func registerPromoCodeRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	adminSettings := admin.Group("/settings")
 	{
+		adminSettings.GET("/ip-risk", h.Admin.Setting.GetIPRisk)
+		adminSettings.PUT("/ip-risk", h.Admin.Setting.SaveIPRisk)
+		adminSettings.GET("/ip-risk/events", h.Admin.Setting.GetIPRiskEvents)
+		adminSettings.DELETE("/ip-risk/events", h.Admin.Setting.ClearIPRiskEvents)
+		adminSettings.GET("/ip-risk/bans", h.Admin.Setting.GetIPRiskBans)
+		adminSettings.POST("/ip-risk/unban", h.Admin.Setting.UnbanIPRisk)
+		adminSettings.POST("/ip-risk/check", h.Admin.Setting.CheckIPRisk)
 		adminSettings.GET("/astra-routing", h.Admin.Setting.GetAstraRouting)
 		adminSettings.PUT("/astra-routing", h.Admin.Setting.UpdateAstraRouting)
 		adminSettings.GET("", h.Admin.Setting.GetSettings)

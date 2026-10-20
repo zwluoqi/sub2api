@@ -1,6 +1,11 @@
 .PHONY: build build-backend build-frontend test test-backend test-frontend test-frontend-critical
 
 FRONTEND_CRITICAL_VITEST := \
+	src/components/account/__tests__/SIWCAccountSettings.spec.ts \
+	src/api/admin/__tests__/modelTrace.spec.ts \
+	src/components/admin/account/__tests__/ModelTracePanel.spec.ts \
+	src/components/admin/account/__tests__/IQTestModal.modelTrace.spec.ts \
+	src/features/ip-risk/__tests__/IPRiskSettings.spec.ts \
 	src/components/admin/account/__tests__/OpenAISessionExportDialog.spec.ts \
 	src/components/admin/account/__tests__/AccountActionMenu.spark_shadow.spec.ts \
 	src/api/__tests__/groupCacheTest.spec.ts \
@@ -54,6 +59,7 @@ FRONTEND_CRITICAL_VITEST := \
 	src/api/__tests__/tokenRefresh.spec.ts \
 	src/api/__tests__/keys.bulkUpdate.spec.ts \
 	src/composables/__tests__/useModelWhitelist.spec.ts \
+	src/components/account/__tests__/UpstreamBillingRateCell.spec.ts \
 	src/components/account/__tests__/OpenAIReferralCell.spec.ts \
 	src/components/account/__tests__/OpenAIReferralCell.transport.spec.ts \
 	src/components/account/__tests__/OpenAIQuotaResetCell.spark_shadow.spec.ts \

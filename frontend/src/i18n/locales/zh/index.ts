@@ -1,9 +1,11 @@
+import siwc from './siwc'
 import priorityScheduling from './priorityScheduling'
 import qualityOps from './qualityOps'
 import controlledExperiments from './controlledExperiments'
 import accountOps from './accountOps'
 import tokenGuard from './tokenGuard'
 import pelicanTests from './pelicanTests'
+import modelTrace from './modelTrace'
 import tokenGuardV2 from './tokenGuardV2'
 import landing from './landing'
 import common from './common'
@@ -20,6 +22,7 @@ import requestTiming from './requestTiming'
 import autoConfig from './autoConfig'
 
 export default {
+  siwc,
   autoConfig,
   priorityScheduling,
   qualityOps,
@@ -27,6 +30,7 @@ export default {
   accountOps,
   tokenGuard,
   pelicanTests,
+  modelTrace,
   tokenGuardV2,
   requestTiming,
   ...landing,

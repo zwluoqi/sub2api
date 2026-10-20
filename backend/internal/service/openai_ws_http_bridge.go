@@ -443,6 +443,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 	if writeClientMessage == nil {
 		return nil, errors.New("client websocket writer is nil")
 	}
+	ctx = withOpenAITransportMode(ctx, "http_bridge")
 	responseModelObserver := &upstreamResponseModelObserver{}
 
 	body, err := prepareOpenAIWSHTTPBridgeBody(account, payload)
@@ -559,7 +560,7 @@ func (s *OpenAIGatewayService) proxyOpenAIWSHTTPBridgeTurn(
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		latest, admissionErr := s.admitOpenAITurn(ctx, c, account, actualModel)
+		latest, admissionErr := s.admitOpenAITurn(ctx, c, account, actualModel, body)
 		if admissionErr == nil {
 			admissionErr = s.applyOpenAICodexTicket(ctx, latest, actualModel, upstreamReq.Header)
 		}

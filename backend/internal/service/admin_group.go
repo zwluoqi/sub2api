@@ -609,6 +609,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		AudioSTTPricePerHour:            audioSTTPricePerHour,
 		ClaudeCodeOnly:                  input.ClaudeCodeOnly,
 		StreamOnly:                      input.StreamOnly,
+		CodexCLIOnly:                    input.CodexCLIOnly,
+		BlockSubagents:                  input.BlockSubagents,
 		FallbackGroupID:                 input.FallbackGroupID,
 		FallbackGroupIDOnInvalidRequest: fallbackOnInvalidRequest,
 		ModelRouting:                    input.ModelRouting,
@@ -953,6 +955,12 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.StreamOnly != nil {
 		group.StreamOnly = *input.StreamOnly
+	}
+	if input.CodexCLIOnly != nil {
+		group.CodexCLIOnly = *input.CodexCLIOnly
+	}
+	if input.BlockSubagents != nil {
+		group.BlockSubagents = *input.BlockSubagents
 	}
 	if input.FallbackGroupID != nil {
 		// 校验降级分组
@@ -1414,6 +1422,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 	if *groupID == 0 {
 		// 0 表示解绑分组（不修改 user_allowed_groups，避免影响用户其他 Key）
 		apiKey.GroupID = nil
+		apiKey.GroupIDs = nil
 		apiKey.Group = nil
 	} else {
 		// 验证目标分组存在且状态为 active
@@ -1439,6 +1448,7 @@ func (s *adminServiceImpl) AdminUpdateAPIKeyGroupID(ctx context.Context, keyID i
 
 		gid := *groupID
 		apiKey.GroupID = &gid
+		apiKey.GroupIDs = []int64{gid}
 		apiKey.Group = group
 
 		// 专属标准分组：使用事务保证「添加分组权限」与「更新 API Key」的原子性

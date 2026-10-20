@@ -1,5 +1,8 @@
+import ipRisk from './ipRisk'
+
 export default {
     settings: {
+      ipRisk,
       title: 'System Settings',
       description: 'Manage registration, email verification, default values, and SMTP settings',
       tabs: {
@@ -243,6 +246,8 @@ export default {
           'Please configure TOTP_ENCRYPTION_KEY in environment variables first. Generate a key with: openssl rand -hex 32'
       },
       security: {
+        loginRateLimit: 'Login rate limiting',
+        loginRateLimitHint: 'Enabled by default. Limits sign-in requests and bans an IP for 1 hour after 10 failed verifications within 15 minutes. Disabling bypasses request limits and IP bans for password, two-factor, Passkey, and OAuth account-binding sign-ins. Saving takes effect immediately for admins and users. Existing bans retain their original expiry when re-enabled.',
         passkey: 'Passkey Sign-in',
         passkeyHint: 'Allow passwordless sign-in and user-managed passkeys when the relying party configuration is valid.',
         passkeyConfigured: 'WebAuthn relying party configuration is valid.',
@@ -1403,6 +1408,10 @@ export default {
       cache_rate_to_users: {
         label: 'Show cache rate to users',
         description: 'When enabled, users can see the per-request cache rate on their own usage page. Off by default, so only admins see it.',
+      },
+      upstream_response_model_to_users: {
+        label: 'Show users the actual upstream response model',
+        description: 'When enabled, users can see the model declared by the upstream response on their usage records. Off by default, so only admins see it. Billing is unchanged, and mapped request models and account details stay hidden.',
       },
       saveSettings: 'Save Settings',
       saving: 'Saving...',

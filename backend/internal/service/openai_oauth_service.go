@@ -14,13 +14,10 @@ import (
 
 // OpenAIOAuthService handles OpenAI OAuth authentication flows
 type OpenAIOAuthService struct {
-	sessionCookieRepo           OpenAISessionCookieRepository
-	sessionCookieEncryptor      SecretEncryptor
-	sessionCookieStorageEnabled bool
-	sessionStore                *openai.SessionStore
-	proxyRepo                   ProxyRepository
-	oauthClient                 OpenAIOAuthClient
-	privacyClientFactory        PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
+	sessionStore         *openai.SessionStore
+	proxyRepo            ProxyRepository
+	oauthClient          OpenAIOAuthClient
+	privacyClientFactory PrivacyClientFactory // 用于调用 chatgpt.com/backend-api（ImpersonateChrome）
 }
 
 // NewOpenAIOAuthService creates a new OpenAI OAuth service
@@ -159,6 +156,9 @@ func (s *OpenAIOAuthService) ExchangeCode(ctx context.Context, input *OpenAIExch
 	session, ok := s.sessionStore.Get(input.SessionID)
 	if !ok {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_SESSION_NOT_FOUND", "session not found or expired")
+	}
+	if session.SIWCAccountID != 0 {
+		return nil, infraerrors.BadRequest("OPENAI_SIWC_BOUND_SESSION", "Complete SIWC authorization on the bound account")
 	}
 	if input.State == "" {
 		return nil, infraerrors.New(http.StatusBadRequest, "OPENAI_OAUTH_STATE_REQUIRED", "oauth state is required")

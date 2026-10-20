@@ -8,11 +8,14 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
+	"github.com/Wei-Shaw/sub2api/internal/iprisk"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/websearch"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -97,6 +100,9 @@ func ProvideRouter(
 		panic(err)
 	}
 	settingService.Serverless = manager
+	settingService.IPRisk = iprisk.New(settingService.IPRiskStore(), redisClient, serverless.NewGeoJSResolver(redisClient), strings.EqualFold(os.Getenv("IP_RISK_DISABLED"), "true"))
+	settingService.IPRisk.Start()
+	lifecycle.onDrain = append(lifecycle.onDrain, settingService.IPRisk.Stop)
 	manager.Start(func(ctx context.Context) error {
 		if lifecycle.isDraining() {
 			return fmt.Errorf("draining")

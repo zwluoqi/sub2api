@@ -1,5 +1,8 @@
+import ipRisk from './ipRisk'
+
 export default {
     settings: {
+      ipRisk,
       title: '系统设置',
       description: '管理注册、邮箱验证、默认值和 SMTP 设置',
       tabs: {
@@ -243,6 +246,8 @@ export default {
           '请先在环境变量中配置 TOTP_ENCRYPTION_KEY。使用命令 openssl rand -hex 32 生成密钥。'
       },
       security: {
+        loginRateLimit: '登录限流',
+        loginRateLimitHint: '默认开启。限制登录请求频率，15 分钟内验证失败 10 次后封禁 IP 1 小时。关闭后，密码、二次验证、Passkey 及第三方绑定登录将跳过频率限制和 IP 封禁；保存后立即生效，对管理员和普通用户均有效。已有封禁在重新开启后仍按原有效期生效。',
         passkey: 'Passkey 登录',
         passkeyHint: '当依赖方配置有效时，允许无密码登录及用户自行管理 Passkey。',
         passkeyConfigured: 'WebAuthn 依赖方配置有效。',
@@ -1397,6 +1402,10 @@ export default {
       cache_rate_to_users: {
         label: '向用户展示缓存率',
         description: '开启后，用户在自己的用量页也能看到单条请求的缓存率。默认关闭，仅管理端可见。',
+      },
+      upstream_response_model_to_users: {
+        label: '向用户展示上游实际响应模型',
+        description: '开启后，用户在用量记录中可以看到上游响应里声明的实际模型。默认关闭，仅管理端可见。不影响计费，也不会展示映射后的请求模型或账号信息。',
       },
       saveSettings: '保存设置',
       saving: '保存中...',

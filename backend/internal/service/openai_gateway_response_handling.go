@@ -291,6 +291,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	completeGuardedEvent := func(queueDrained bool) {
 		completedProgressEvent := eventStartsClientOutput
 		completedTTFTEvent := eventStartsTTFTOutput
+		if completedProgressEvent && !terminalFailurePending && !sawFailedEvent {
+			observeOpenAIHTTPProgress(ctx)
+		}
 		shouldFlush := eventShouldFlush || (queueDrained && clientOutputStarted)
 		eventInProgress = false
 		if !clientDisconnected {
@@ -548,6 +551,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				failedMessage = extractOpenAISSEErrorMessage(dataBytes)
 				if failedMessage == "" {
 					failedMessage = "Upstream response failed"
+				}
+				if isOpenAIInvalidEncryptedContentEvent(dataBytes) {
+					markOpenAIStreamInvalidEncryptedContent(c)
 				}
 				if account != nil && account.IsGrok() {
 					status := openAIStreamFailureStatus(dataBytes, failedMessage)

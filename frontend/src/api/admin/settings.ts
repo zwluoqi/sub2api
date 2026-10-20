@@ -410,6 +410,7 @@ export interface SystemSettings {
 	prism_browser_api_key_configured: boolean;
   // Registration settings
   registration_enabled: boolean;
+  login_rate_limit_enabled: boolean;
   email_verify_enabled: boolean;
   registration_email_suffix_whitelist: string[];
   registration_email_domain_quota_enabled: boolean;
@@ -787,6 +788,7 @@ export interface SystemSettings {
   usage_show_long_context_badge: boolean;
   usage_show_cache_rate: boolean;
   usage_show_cache_rate_to_users: boolean;
+  usage_show_upstream_response_model_to_users: boolean;
   request_capture_enabled: boolean;
   request_capture_quota_mib: number;
   request_capture_retention_days: number;
@@ -814,6 +816,7 @@ export interface UpdateSettingsRequest {
 	prism_browser_base_url?: string;
 	prism_browser_api_key?: string;
   registration_enabled?: boolean;
+  login_rate_limit_enabled?: boolean;
   email_verify_enabled?: boolean;
   registration_email_suffix_whitelist?: string[];
   registration_email_domain_quota_enabled?: boolean;
@@ -1141,6 +1144,7 @@ export interface UpdateSettingsRequest {
   usage_show_long_context_badge?: boolean;
   usage_show_cache_rate?: boolean;
   usage_show_cache_rate_to_users?: boolean;
+  usage_show_upstream_response_model_to_users?: boolean;
   request_capture_enabled?: boolean;
   request_capture_quota_mib?: number;
   request_capture_retention_days?: number;
