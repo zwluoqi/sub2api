@@ -951,8 +951,16 @@ func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account
 		return s.testOpenAICompactConnection(c, account, testModelID)
 	}
 
-	// Route to image generation test if an image model is selected
-	if isOpenAIImageModel(testModelID) {
+	// Extra models are an API-key Images grant, never a native Codex tool model.
+	extraImage := account.AllowsExtraImageModel(modelID) || account.AllowsExtraImageModel(testModelID)
+	if extraImage {
+		parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint, Model: firstNonEmptyString(modelID, testModelID)}
+		if err := parsed.ValidateAccountModels(account, ""); err != nil {
+			return s.sendErrorAndEnd(c, err.Error())
+		}
+	}
+	// Route to image generation test if an image model is selected.
+	if isOpenAIImageModel(testModelID) || extraImage {
 		imagePrompt := strings.TrimSpace(prompt)
 		if imagePrompt == "" {
 			imagePrompt = defaultOpenAIImageTestPrompt
@@ -2638,6 +2646,12 @@ func (s *AccountTestService) reconcileOpenAI429State(ctx context.Context, accoun
 		return
 	}
 	if s == nil || s.accountRepo == nil || account == nil {
+		return
+	}
+
+	// A relayed ChatGPT quota window is not the API key's own quota. Manual
+	// tests must not turn it into a persistent key-wide scheduling block.
+	if !account.IsOpenAIOAuthLike() {
 		return
 	}
 
