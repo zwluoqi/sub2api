@@ -1384,11 +1384,20 @@ describe('quality operations', () => {
     await vm.moreOperations(); expect(listQualityOperations).toHaveBeenLastCalledWith(10)
     wrapper.unmount()
   })
-  it('requires the operator to select a judge model and group', async () => {
+  it('saves an answer rule without a judge group and requires the judge model once a group is chosen', async () => {
     const wrapper = mountView(); await flushPromises(); const vm = wrapper.vm as any
     vm.newPlan(); vm.accountScope = 'manual'; vm.selectedAccounts = [1]; vm.form.model_id = 'test-model'
+    vm.form.pelican_config.quality.remove_group_ids = [21]; await flushPromises()
+    expect(wrapper.find('#quality-judge-models').exists()).toBe(false)
+    await wrapper.get('[data-testid="quality-judge-group"]').setValue('21'); await flushPromises()
+    expect(wrapper.find('#quality-judge-models').exists()).toBe(true)
     await vm.save(); expect(scheduledTests.create).not.toHaveBeenCalled()
     expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
+    await wrapper.get('[data-testid="quality-judge-group"]').setValue('0'); await flushPromises()
+    await vm.save()
+    const request = vi.mocked(scheduledTests.create).mock.calls[0][0] as any
+    expect(request.pelican_config.quality).toMatchObject({ expected_answer: '21', action: 'remove_groups', remove_group_ids: [21] })
+    expect(request.pelican_config.quality).not.toHaveProperty('judge')
     wrapper.unmount()
   })
   it('saves a state probe rule without a question, reference answer, judge or parallel runs', async () => {
@@ -1416,8 +1425,9 @@ describe('quality operations', () => {
     expect(vm.form.pelican_config.quality.expected_answer).toBe('21')
     expect(vm.form.pelican_config.quality.judge).toEqual({ group_id: 0, model_id: '', prompt: 'qualityOps.defaultJudgePrompt' })
     await vm.save()
-    expect(scheduledTests.update).not.toHaveBeenCalled()
-    expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
+    const request = vi.mocked(scheduledTests.update).mock.calls[0][1] as any
+    expect(request.pelican_config).toMatchObject({ question_kind: 'candy', quality: { expected_answer: '21', action: 'disable_scheduling' } })
+    expect(request.pelican_config.quality).not.toHaveProperty('judge')
     wrapper.unmount()
   })
   it.each(['state_probe', 'candy'] as const)('shows unsupported %s models as neutral skips without a fabricated answer', async kind => {
@@ -1808,7 +1818,7 @@ describe('quality operations', () => {
     vm.newPlan(); await flushPromises()
     vi.mocked(accountsAPI.list).mockClear()
     await vm.save()
-    expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.configureJudge')
+    expect(wrapper.find('[role="alert"]').text()).toContain('qualityOps.selectGroups')
     expect(accountsAPI.list).not.toHaveBeenCalled()
     expect(createQualityTemplate).not.toHaveBeenCalled()
     expect(vm.selectedAccounts).toEqual([])

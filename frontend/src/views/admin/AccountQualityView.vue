@@ -45,7 +45,6 @@
               <div class="rule-model"><code v-for="model in ruleModels(plan)" :key="model">{{ model }}</code><span v-if="isProbePlan(plan)" class="probe-tag" data-testid="quality-probe-tag">{{ t('qualityOps.probeTag') }}</span><span v-if="planTemplate[plan.id]" class="template-tag" data-testid="quality-template-tag">{{ t('qualityOps.templateTag', { id: planTemplate[plan.id] }) }}</span><span v-if="running(plan)" class="running-label">{{ t('qualityOps.running') }}</span></div>
               <div class="rule-target" :title="planGroups(plan)"><Icon name="users" size="xs" /><span>{{ planGroups(plan) }}</span></div>
               <div class="rule-schedule"><span>{{ t('qualityOps.nextRun') }}</span><time :datetime="plan.next_run_at || undefined">{{ plan.enabled ? date(plan.next_run_at) : '—' }}</time></div>
-              <div v-if="!isProbePlan(plan) && !plan.pelican_config?.quality?.judge" class="rule-warning">{{ t('qualityOps.configureJudge') }}</div>
               <footer class="rule-actions"><button @click="history(plan)"><Icon name="document" size="xs" />{{ t('qualityOps.historyShort') }}</button><button :disabled="!!pending[plan.id] || plan.pelican_config?.quality?.action === 'openai_two_fa_admission'" @click="edit(plan)">{{ t('qualityOps.editShort') }}</button><button :disabled="!!pending[plan.id] || !plan.enabled || running(plan)" @click="run(plan)"><Icon name="play" size="xs" />{{ pending[plan.id] === 'run' ? t('qualityOps.submitting') : t('qualityOps.runShort') }}</button><button data-testid="quality-rule-copy" :disabled="busy || !!pending[plan.id] || !canCopyRules || !plan.pelican_config?.quality || plan.pelican_config.quality.action === 'openai_two_fa_admission'" :title="t(!canCopyRules ? 'qualityOps.copyPermission' : plan.pelican_config?.quality?.action === 'openai_two_fa_admission' ? 'qualityOps.copyUnsupported' : 'qualityOps.copy')" @click="copyRule(plan)"><Icon name="copy" size="xs" />{{ t('qualityOps.copy') }}</button><button data-testid="quality-rule-save-preset" :disabled="busy || !!pending[plan.id] || !canCopyRules || !plan.pelican_config?.quality || plan.pelican_config.quality.action === 'openai_two_fa_admission'" :title="t(!canCopyRules ? 'qualityOps.reusePermission' : 'qualityOps.savePreset')" @click="saveRuleAsPreset(plan)">{{ t('qualityOps.savePreset') }}</button></footer>
             </article>
             <div v-if="store.rulesLoaded && !filteredPlans.length && (plans.length || !templates.length)" class="panel-empty"><Icon name="inbox" size="lg" /><p>{{ plans.length ? t('qualityOps.noMatchingRules') : t('qualityOps.empty') }}</p><button v-if="!plans.length" class="btn btn-secondary" @click="newPlan">{{ t('qualityOps.create') }}</button></div>
@@ -162,17 +161,17 @@
           <legend class="px-2 font-medium">{{ t('qualityOps.judgeTitle') }}</legend>
           <div class="grid gap-4 sm:grid-cols-2">
             <label class="space-y-1"><span>{{ t('qualityOps.judgeGroup') }}</span>
-              <select v-model.number="form.pelican_config.quality.judge.group_id" required class="input" @change="loadJudgeModels">
-                <option disabled :value="0">{{ t('qualityOps.selectJudgeGroup') }}</option>
+              <select v-model.number="form.pelican_config.quality.judge.group_id" class="input" data-testid="quality-judge-group" @change="loadJudgeModels">
+                <option :value="0">{{ t('qualityOps.judgeExactOnly') }}</option>
                 <option v-for="group in groups.filter(g => g.status === 'active')" :key="group.id" :value="group.id">{{ group.name }} #{{ group.id }}</option>
               </select>
             </label>
-            <label class="space-y-1"><span>{{ t('qualityOps.judgeModel') }}</span>
+            <label v-if="form.pelican_config.quality.judge.group_id" class="space-y-1"><span>{{ t('qualityOps.judgeModel') }}</span>
               <input v-model.trim="form.pelican_config.quality.judge.model_id" list="quality-judge-models" required maxlength="100" class="input" :placeholder="t('qualityOps.selectJudgeModel')" />
               <datalist id="quality-judge-models"><option v-for="model in judgeModels" :key="model" :value="model" /></datalist>
             </label>
           </div>
-          <label class="block space-y-1"><span>{{ t('qualityOps.judgePrompt') }}</span><textarea v-model="form.pelican_config.quality.judge.prompt" required maxlength="16000" rows="3" class="input text-sm" /></label>
+          <label v-if="form.pelican_config.quality.judge.group_id" class="block space-y-1"><span>{{ t('qualityOps.judgePrompt') }}</span><textarea v-model="form.pelican_config.quality.judge.prompt" required maxlength="16000" rows="3" class="input text-sm" /></label>
           <p class="text-sm text-gray-500">{{ t('qualityOps.grading') }}</p>
         </fieldset>
         </template>
@@ -231,7 +230,7 @@
               <div v-if="selectedResult.status !== 'skipped' && !isProbeResult(selectedResult)" class="answer-reference"><span>{{ t('qualityOps.answer') }}</span><p>{{ selectedResult.pelican_config?.quality?.expected_answer || detailOperation?.pelican_config?.quality?.expected_answer || '—' }}</p></div>
               <div class="response-heading">{{ t(selectedResult.status === 'skipped' ? 'qualityOps.skipReason' : isProbeResult(selectedResult) ? 'qualityOps.probeDetail' : 'qualityOps.actualAnswer') }}<span v-if="selectedResult.latency_ms">{{ (selectedResult.latency_ms / 1000).toFixed(1) }}s</span></div>
               <pre class="response-content">{{ resultContent(selectedResult) }}</pre>
-              <div v-if="selectedResult.quality_judgment && !isProbeResult(selectedResult)" class="judge-reason"><h5>{{ t('qualityOps.judgeReason') }}</h5><p>{{ selectedResult.quality_judgment.reason || '—' }}</p><span>{{ selectedResult.quality_judgment.model_id || '—' }} · {{ groupNames[selectedResult.quality_judgment.group_id || 0] || selectedResult.quality_judgment.group_id || '—' }}</span></div>
+              <div v-if="selectedResult.quality_judgment && !isProbeResult(selectedResult)" class="judge-reason"><h5>{{ t('qualityOps.judgeReason') }}</h5><p>{{ judgmentReason(selectedResult.quality_judgment.reason) }}</p><span v-if="isLocalJudgment(selectedResult.quality_judgment.reason)">{{ t('qualityOps.judgeLocalCompare') }}</span><span v-else>{{ selectedResult.quality_judgment.model_id || '—' }} · {{ groupNames[selectedResult.quality_judgment.group_id || 0] || selectedResult.quality_judgment.group_id || '—' }}</span></div>
             </template><div v-else-if="!detailsError" class="panel-empty">{{ t('qualityOps.noResults') }}</div>
           </section>
         </div>
@@ -276,13 +275,13 @@ import scheduledTests from '@/api/admin/scheduledTests'
 import * as accountsAPI from '@/api/admin/accounts'
 import * as groupsAPI from '@/api/admin/groups'
 import { CANDY_PROMPT, STATE_PROBE_QUESTION, stateProbeVerdict, type StateProbeVerdict } from '@/utils/intelligenceTest'
-import { buildQualityRulePatch, copyQualityRuleConfig, qualityRuleFieldValue, qualityActionPayload, qualityUsesGroups, qualityUsesModelResults, defaultQualityBPS, qualityBPSError, qualityBPSForm, qualityRuleFields, type QualityRuleField } from '@/utils/qualityRulePatch'
+import { buildQualityRulePatch, copyQualityRuleConfig, qualityRuleFieldValue, qualityActionPayload, qualityJudgePayload, qualityUsesGroups, qualityUsesModelResults, defaultQualityBPS, qualityBPSError, qualityBPSForm, qualityRuleFields, type QualityRuleField } from '@/utils/qualityRulePatch'
 import { DEFAULT_STATE_PROBE_CRON } from '@/utils/intelligenceTest'
 import QualityOwnershipReview from '@/components/admin/operations/QualityOwnershipReview.vue'
 import QualityProbeSchedule from '@/components/admin/operations/QualityProbeSchedule.vue'
 import QualityModelShortcuts from '@/components/admin/operations/QualityModelShortcuts.vue'
 import { qualityAccountStatusOptions, qualityAccountTypeOptions } from '@/utils/qualityAccountFilter'
-import type { AccountListItem, QualityBPSPolicy, QualityPolicy, ScheduledTestPlan, ScheduledTestResult } from '@/types'
+import type { AccountListItem, QualityBPSPolicy, QualityJudgeConfig, QualityPolicy, ScheduledTestPlan, ScheduledTestResult } from '@/types'
 
 const { t, te } = useI18n()
 const store = useAccountQualityStore(), auth = useAuthStore()
@@ -580,6 +579,12 @@ function resultTone(result: ScheduledTestResult) {
   if (stateProbeVerdict(result) === 'inconclusive') return 'tone-neutral'
   return result.status === 'success' ? 'tone-success' : 'tone-danger'
 }
+const LOCAL_JUDGMENT_REASONS: Record<string, string> = { exact_match: 'qualityOps.judgeExactMatch', exact_mismatch: 'qualityOps.judgeExactMismatch' }
+const isLocalJudgment = (reason?: string) => !!reason && reason in LOCAL_JUDGMENT_REASONS
+function judgmentReason(reason?: string) {
+  if (!reason) return '—'
+  return isLocalJudgment(reason) ? t(LOCAL_JUDGMENT_REASONS[reason]) : reason
+}
 function resultContent(result: ScheduledTestResult) {
   if (result.status === 'skipped') return t(result.error_message === 'model_catalog_unavailable' ? 'qualityOps.catalogSkipHelp' : 'qualityOps.unsupportedSkipHelp')
   return result.response_text || result.error_message || t('qualityOps.noAnswer')
@@ -835,10 +840,12 @@ function payload() {
   if (model_ids.length > 50 || model_ids.length * form.value.pelican_config.parallel_count > 100) throw new Error(t('qualityOps.tooManyModelSamples'))
   const max_results = Math.max(form.value.max_results, model_ids.length * form.value.pelican_config.parallel_count)
   const quality = form.value.pelican_config.quality
-  let nextQuality: QualityPolicy
-  try { nextQuality = qualityActionPayload(quality) } catch (cause) {
+  let nextQuality: QualityPolicy, judge: QualityJudgeConfig | undefined
+  try { nextQuality = qualityActionPayload(quality); judge = isProbe.value ? undefined : qualityJudgePayload(quality.judge) } catch (cause) {
     throw new Error(t(cause instanceof Error ? cause.message : 'qualityOps.error'))
   }
+  if (judge) nextQuality.judge = judge
+  else delete nextQuality.judge
   if (nextQuality.action === 'isolate_models' && isProbe.value) throw new Error(t('qualityOps.isolationRequiresCandy'))
   if (isRandom.value) {
     nextQuality.expected_answer = ''
@@ -846,7 +853,6 @@ function payload() {
   }
   if (!isProbe.value) return { ...form.value, max_results, pelican_config: { ...form.value.pelican_config, model_ids, quality: nextQuality } }
   nextQuality.expected_answer = ''
-  delete nextQuality.judge
   return { ...form.value, pelican_config: { ...form.value.pelican_config, model_ids, prompt: '', parallel_count: 1, quality: nextQuality } }
 }
 async function save() {
@@ -862,8 +868,9 @@ async function save() {
       if (!selectedAccounts.value.length) throw new Error(t('qualityOps.copyAccountRequired'))
       if (selectedAccounts.value.some(id => existingAccountIds.value.has(id))) throw new Error(t('qualityOps.copyAccountConflict'))
     }
-    const judge = form.value.pelican_config.quality.judge
-    if (!isProbe.value && (!judge.group_id || !judge.model_id.trim() || !judge.prompt.trim())) throw new Error(t('qualityOps.configureJudge'))
+    if (!isProbe.value) {
+      try { qualityJudgePayload(form.value.pelican_config.quality.judge) } catch { throw new Error(t('qualityOps.configureJudge')) }
+    }
     if (form.value.pelican_config.quality.action === 'enable_bps') {
       if (!isProbe.value) throw new Error(t('qualityOps.bpsRequiresProbe'))
       const invalid = qualityBPSError(bps.value)
@@ -1212,7 +1219,6 @@ onBeforeUnmount(() => { alive = false; accountSelectionRequest++; detailRequest+
 .rule-target span { @apply truncate; }
 .rule-schedule { @apply mt-3 flex justify-between gap-2 text-[11px] tabular-nums text-gray-400; }
 .rule-schedule time { @apply text-gray-600 dark:text-gray-300; }
-.rule-warning { @apply mt-2 text-xs text-amber-600; }
 .rule-actions { @apply mt-3 flex flex-wrap items-center gap-1 border-t border-gray-100 pt-2 dark:border-dark-700; }
 .rule-actions button { @apply inline-flex min-h-8 flex-1 items-center justify-center whitespace-nowrap gap-1 rounded-md text-[11px] text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-dark-800 dark:hover:text-gray-100; }
 .rule-actions button:first-child { @apply text-primary-600; }

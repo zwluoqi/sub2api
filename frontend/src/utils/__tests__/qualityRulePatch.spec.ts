@@ -136,9 +136,17 @@ describe('quality rule partial updates', () => {
     const input = draft(); delete input.pelican_config.quality.judge
     input.pelican_config.quality.remove_group_ids = []
     expect(buildQualityRulePatch(plan(), input, ['enabled'])).toEqual({ enabled: false })
-    expect(() => buildQualityRulePatch(plan(), input, ['test'])).toThrow('qualityOps.configureJudge')
     expect(() => buildQualityRulePatch(plan(), input, ['action'])).toThrow('qualityOps.selectGroups')
     expect(() => buildQualityRulePatch(plan(), input, [])).toThrow('qualityOps.selectBulkFields')
+  })
+
+  it('bulk test edits without a judge group drop each rule\'s judge and keep exact answer matching', () => {
+    const input = draft(); input.pelican_config.quality.judge = { group_id: 0, model_id: '', prompt: 'Default rubric' }
+    const config = buildQualityRulePatch(plan(), input, ['test']).pelican_config!
+    expect(config.quality).toMatchObject({ expected_answer: '42' })
+    expect(config.quality).not.toHaveProperty('judge')
+    input.pelican_config.quality.judge = { group_id: 21, model_id: ' ', prompt: 'Grade the answer' }
+    expect(() => buildQualityRulePatch(plan(), input, ['test'])).toThrow('qualityOps.configureJudge')
   })
 
   it('copies and normalizes the BPS policy when enabling BPS on probe rules', () => {

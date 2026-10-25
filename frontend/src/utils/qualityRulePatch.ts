@@ -1,4 +1,4 @@
-import type { PelicanTestConfig, QualityBPSPolicy, QualityPolicy, ScheduledTestPlan, UpdateScheduledTestPlanRequest } from '@/types'
+import type { PelicanTestConfig, QualityBPSPolicy, QualityJudgeConfig, QualityPolicy, ScheduledTestPlan, UpdateScheduledTestPlanRequest } from '@/types'
 import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import { STATE_PROBE_QUESTION } from './intelligenceTest'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval } from './excelBPSRecovery'
@@ -91,6 +91,13 @@ export function qualityUsesModelResults(action?: QualityPolicy['action']) {
   return action === 'remove_models' || action === 'isolate_models'
 }
 
+// 判题分组可选：没选分组时不提交判题配置，只按参考答案比对；选了分组才要求模型和提示词。
+export function qualityJudgePayload(judge?: QualityJudgeConfig): QualityJudgeConfig | undefined {
+  if (!judge?.group_id) return undefined
+  if (!judge.model_id.trim() || !judge.prompt.trim()) throw new Error('qualityOps.configureJudge')
+  return { group_id: judge.group_id, model_id: judge.model_id.trim(), prompt: judge.prompt }
+}
+
 // Used by single-account creation, templates and bulk editing. Action cleanup
 // and validation belong here so all entry points preserve the same semantics.
 export function qualityActionPayload(policy: QualityPolicy): QualityPolicy {
@@ -181,10 +188,10 @@ export function buildQualityRulePatch(
     config.quality.expected_answer = probe || random ? '' : source.quality.expected_answer
     if (probe) { delete config.quality.judge; config.model_ids = [patch.model_id || plan.model_id] }
     else {
-      const judge = source.quality.judge
-      if (!judge?.group_id || !judge.model_id.trim() || !judge.prompt.trim()) throw new Error('qualityOps.configureJudge')
+      const judge = qualityJudgePayload(source.quality.judge)
       if (!random && (!config.prompt.trim() || !config.quality.expected_answer.trim())) throw new Error('qualityOps.questionRequired')
-      config.quality.judge = { ...judge }
+      if (judge) config.quality.judge = judge
+      else delete config.quality.judge
     }
   }
   if (fields.includes('action')) {

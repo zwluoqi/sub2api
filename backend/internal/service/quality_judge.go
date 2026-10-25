@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 )
@@ -49,10 +51,23 @@ func NewQualityJudgeService(accounts AccountRepository, groups GroupRepository, 
 	return &QualityJudgeService{accounts: accounts, groups: groups, slots: slots, request: tests.runQualityJudgeRequest}
 }
 
+// Local comparison reasons. A matching answer passes without spending a judge
+// request; without a configured judge a mismatch is a wrong answer.
+const (
+	QualityJudgeReasonExactMatch    = "exact_match"
+	QualityJudgeReasonExactMismatch = "exact_mismatch"
+)
+
 func (s *QualityJudgeService) Judge(ctx context.Context, testedAccount int64, cfg *PelicanTestConfig, answer string) *QualityJudgment {
 	result := &QualityJudgment{Verdict: "unknown", Reason: "judge_not_configured"}
-	if cfg.Quality == nil || cfg.Quality.Judge == nil {
+	if cfg.Quality == nil {
 		return result
+	}
+	if qualityAnswerMatches(cfg.Quality.ExpectedAnswer, answer) {
+		return &QualityJudgment{Verdict: "correct", Reason: QualityJudgeReasonExactMatch}
+	}
+	if cfg.Quality.Judge == nil {
+		return &QualityJudgment{Verdict: "incorrect", Reason: QualityJudgeReasonExactMismatch}
 	}
 	judge := cfg.Quality.Judge
 	result.GroupID = judge.GroupID
@@ -163,6 +178,61 @@ func qualityJudgeCandidates(accounts []Account, testedAccount int64, judge *Qual
 		}
 	}
 	return ordered
+}
+
+// qualityAnswerMatches ignores formatting only: surrounding whitespace, case,
+// full-width ASCII, Markdown emphasis, code fences, quotes and a trailing full
+// stop. JSON answers (including bare numbers) compare by value, so key order,
+// spacing and "21" vs "21.0" do not matter. Units or wording still differ.
+func qualityAnswerMatches(expected, answer string) bool {
+	expected, answer = normalizeQualityAnswer(expected), normalizeQualityAnswer(answer)
+	if expected == "" || answer == "" {
+		return false
+	}
+	if expected == answer {
+		return true
+	}
+	var want, got any
+	if json.Unmarshal([]byte(expected), &want) != nil || json.Unmarshal([]byte(answer), &got) != nil {
+		return false
+	}
+	return reflect.DeepEqual(want, got)
+}
+
+func normalizeQualityAnswer(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "```") && strings.HasSuffix(value, "```") && len(value) >= 6 {
+		value = strings.TrimSuffix(value, "```")
+		if newline := strings.IndexByte(value, '\n'); newline >= 0 {
+			value = value[newline+1:]
+		} else {
+			value = strings.TrimPrefix(value, "```")
+		}
+	}
+	value = strings.Map(func(r rune) rune {
+		switch {
+		case r == '*' || r == '`':
+			return -1
+		case r == '\u3000':
+			return ' '
+		case r >= '\uFF01' && r <= '\uFF5E':
+			r -= '\uFF01' - '!'
+		}
+		return unicode.ToLower(r)
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	for {
+		trimmed := strings.TrimSpace(strings.TrimRight(value, ".。!！"))
+		for _, pair := range [][2]string{{`"`, `"`}, {"'", "'"}, {"“", "”"}, {"「", "」"}} {
+			if len(trimmed) > len(pair[0])+len(pair[1]) && strings.HasPrefix(trimmed, pair[0]) && strings.HasSuffix(trimmed, pair[1]) {
+				trimmed = strings.TrimSpace(trimmed[len(pair[0]) : len(trimmed)-len(pair[1])])
+			}
+		}
+		if trimmed == value {
+			return value
+		}
+		value = trimmed
+	}
 }
 
 func qualityJudgePrompt(cfg *PelicanTestConfig, answer string) string {

@@ -76,14 +76,69 @@ func TestQualityJudgeFailoverAndFailClosed(t *testing.T) {
 	require.Equal(t, int64(3), judged.AccountID)
 	require.Equal(t, slots.acquired, slots.released)
 	svc.request = func(context.Context, int64, string, string) (string, error) { return "21", nil }
-	judged = svc.Judge(context.Background(), 1, cfg, "21")
+	judged = svc.Judge(context.Background(), 1, cfg, "21个")
 	require.Equal(t, "unknown", judged.Verdict)
 	result := &ScheduledTestResult{Status: "success"}
 	applyQualityJudgment(result, judged)
 	require.Equal(t, "inconclusive", qualityOutcome([]*ScheduledTestResult{result}))
-	cfg.Quality.Judge = nil
+	cfg.Quality = nil
 	require.Equal(t, "judge_not_configured", svc.Judge(context.Background(), 1, cfg, "21").Reason)
 	require.Equal(t, "inconclusive", qualityOutcome([]*ScheduledTestResult{{Status: "success"}}), "unjudged answers must never restore")
+}
+
+// 一致的答案直接通过，不消耗判题请求；未配置判题分组时不一致即答错。
+func TestQualityJudgeExactAnswerWithoutJudgeGroup(t *testing.T) {
+	svc, cfg, accounts, slots := judgeFixture()
+	svc.request = func(context.Context, int64, string, string) (string, error) {
+		t.Fatal("a matching answer must not call the judge")
+		return "", nil
+	}
+	judged := svc.Judge(context.Background(), 1, cfg, " **２１**。")
+	require.Equal(t, &QualityJudgment{Verdict: "correct", Reason: QualityJudgeReasonExactMatch}, judged)
+	require.Zero(t, accounts.group)
+	require.Empty(t, slots.acquired)
+
+	cfg.Quality.Judge = nil
+	judged = svc.Judge(context.Background(), 1, cfg, "21")
+	require.Equal(t, "correct", judged.Verdict)
+	result := &ScheduledTestResult{Status: "success"}
+	applyQualityJudgment(result, judged)
+	require.Equal(t, "passed", qualityOutcome([]*ScheduledTestResult{result}))
+
+	judged = svc.Judge(context.Background(), 1, cfg, "22")
+	require.Equal(t, &QualityJudgment{Verdict: "incorrect", Reason: QualityJudgeReasonExactMismatch}, judged)
+	result = &ScheduledTestResult{Status: "success"}
+	applyQualityJudgment(result, judged)
+	require.Equal(t, "answer_mismatch", result.ErrorMessage)
+	require.Equal(t, "failed", qualityOutcome([]*ScheduledTestResult{result}))
+}
+
+func TestQualityAnswerMatchesFormattingOnly(t *testing.T) {
+	for _, tc := range []struct {
+		expected, answer string
+		match            bool
+	}{
+		{"21", "21", true},
+		{"21", "  21。\n", true},
+		{"21", "`21`", true},
+		{"21", "\"21\"", true},
+		{"21", "21.0", true},
+		{"Paris", "paris!", true},
+		{"Paris", "「Paris」", true},
+		{`{"count":12,"first":"RRUU"}`, "```json\n{ \"first\": \"RRUU\", \"count\": 12 }\n```", true},
+		{`{"penalty":3,"assignments":["010101","110000"]}`, `{"assignments":["010101","110000"],"penalty":3}`, true},
+		{"21", "21个", false},
+		{"21", "答案：21", false},
+		{"21", "2 1", false},
+		{"21", "212", false},
+		{`{"count":12,"first":"RRUU"}`, `{"count":12,"first":"RURU"}`, false},
+		{`{"penalty":3,"assignments":["010101","110000"]}`, `{"penalty":3,"assignments":["110000","010101"]}`, false},
+		{"21", "", false},
+		{"", "", false},
+		{"", "21", false},
+	} {
+		require.Equal(t, tc.match, qualityAnswerMatches(tc.expected, tc.answer), "%q vs %q", tc.expected, tc.answer)
+	}
 }
 func TestQualityJudgeSkipsUnavailableOrUnsupportedAccounts(t *testing.T) {
 	svc, cfg, accounts, slots := judgeFixture()
@@ -153,7 +208,7 @@ func TestQualityJudgeContinuesPastRejectedRoutes(t *testing.T) {
 		}
 		return `{"verdict":"correct","reason":"equivalent"}`, nil
 	}
-	result := svc.Judge(context.Background(), 1, cfg, "21")
+	result := svc.Judge(context.Background(), 1, cfg, "21个")
 	require.Equal(t, "correct", result.Verdict)
 	require.Equal(t, []int64{2, 3, 4, 5}, called)
 	require.Equal(t, called, slots.released)
@@ -177,7 +232,7 @@ func TestQualityJudgeDiversifiesRoutesAndRetainsPeerCredentials(t *testing.T) {
 		}
 		return `{"verdict":"correct","reason":"equivalent"}`, nil
 	}
-	result := svc.Judge(context.Background(), 1, cfg, "21")
+	result := svc.Judge(context.Background(), 1, cfg, "21个")
 	require.Equal(t, "correct", result.Verdict)
 	require.Equal(t, []int64{10, 12, 13, 11}, called)
 	require.Equal(t, called, slots.released)
@@ -190,7 +245,7 @@ func TestQualityJudgeExhaustionAttemptsEachAccountOnce(t *testing.T) {
 	svc.request = func(context.Context, int64, string, string) (string, error) {
 		return "", fmt.Errorf("model unavailable")
 	}
-	result := svc.Judge(context.Background(), 1, cfg, "21")
+	result := svc.Judge(context.Background(), 1, cfg, "21个")
 	require.Equal(t, "unknown", result.Verdict)
 	require.Equal(t, "judge_request_failed", result.Reason)
 	require.Equal(t, []int64{2, 3}, slots.acquired)
@@ -206,7 +261,7 @@ func TestQualityJudgeCancellationAndAttemptDeadline(t *testing.T) {
 			t.Fatal("cancelled judge must not send requests")
 			return "", nil
 		}
-		require.Equal(t, "unknown", svc.Judge(ctx, 1, cfg, "21").Verdict)
+		require.Equal(t, "unknown", svc.Judge(ctx, 1, cfg, "21个").Verdict)
 		require.Empty(t, slots.acquired)
 	})
 	t.Run("cancel during request", func(t *testing.T) {
@@ -222,7 +277,7 @@ func TestQualityJudgeCancellationAndAttemptDeadline(t *testing.T) {
 			cancel()
 			return "", ctx.Err()
 		}
-		require.Equal(t, "unknown", svc.Judge(ctx, 1, cfg, "21").Verdict)
+		require.Equal(t, "unknown", svc.Judge(ctx, 1, cfg, "21个").Verdict)
 		require.Equal(t, []int64{2}, slots.acquired)
 		require.Equal(t, slots.acquired, slots.released)
 		require.ErrorIs(t, attempt.Err(), context.Canceled)

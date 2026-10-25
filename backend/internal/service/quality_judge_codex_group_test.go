@@ -23,7 +23,7 @@ func TestQualityJudgeUsesCodexRestrictedGroupWithoutEmployeeAdmission(t *testing
 		require.NotEmpty(t, prompt)
 		return `{"verdict":"correct","reason":"equivalent"}`, nil
 	}
-	result := svc.Judge(context.Background(), 1, cfg, "21")
+	result := svc.Judge(context.Background(), 1, cfg, "21个")
 	require.True(t, called)
 	require.Equal(t, "correct", result.Verdict)
 	require.Equal(t, group.ID, accounts.group)

@@ -24,6 +24,12 @@ func TestQualityValidationAndGrading(t *testing.T) {
 		func(p *ScheduledTestPlan) { p.PelicanConfig.Quality.RemoveGroupIDs = []int64{-1} },
 		func(p *ScheduledTestPlan) { p.PelicanConfig.QuestionKind = "pelican" },
 		func(p *ScheduledTestPlan) { p.AutoRecover = true },
+		func(p *ScheduledTestPlan) {
+			p.PelicanConfig.Quality.Judge = &QualityJudgeConfig{GroupID: 9, Prompt: "grade"}
+		},
+		func(p *ScheduledTestPlan) {
+			p.PelicanConfig.Quality.Judge = &QualityJudgeConfig{ModelID: "custom-judge", Prompt: "grade"}
+		},
 	} {
 		copy := *plan
 		cfg := *plan.PelicanConfig
@@ -33,6 +39,13 @@ func TestQualityValidationAndGrading(t *testing.T) {
 		change(&copy)
 		_, err = nextPlanRun(&copy, time.Now())
 		require.Error(t, err)
+	}
+	// 未选判题分组的规则只比对参考答案，空判题配置按未配置保存。
+	for _, judge := range []*QualityJudgeConfig{nil, {Prompt: "default rubric"}} {
+		plan.PelicanConfig.Quality.Judge = judge
+		_, err = nextPlanRun(plan, time.Now())
+		require.NoError(t, err)
+		require.Nil(t, plan.PelicanConfig.Quality.Judge)
 	}
 }
 func TestQualityOutcomeRequiresCompletedWrongAnswerAndAllPassingRecovery(t *testing.T) {
