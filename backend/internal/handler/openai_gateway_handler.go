@@ -4170,7 +4170,7 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		if status <= 0 {
 			status = http.StatusServiceUnavailable
 		}
-		h.handleStreamingAwareError(c, status, "server_error", failoverErr.ClientMessage, streamStarted)
+		h.handleStreamingAwareErrorWithCode(c, status, "server_error", service.OpenAIUpstreamCapacityCode, failoverErr.ClientMessage, streamStarted, false)
 		return
 	}
 	// BPS rejections may echo request data: keep the fixed code and message
