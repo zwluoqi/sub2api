@@ -1,3 +1,4 @@
+import channelOps from './channelOps'
 import ipAudit from './ipAudit'
 import traffic from './traffic'
 import connections from './connections'
@@ -34,6 +35,7 @@ export default {
   autoConfig,
   priorityScheduling,
   qualityOps,
+  channelOps,
   controlledExperiments,
   accountOps,
   tokenGuard,

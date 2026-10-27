@@ -53,13 +53,25 @@ func validateQualityPolicy(plan *ScheduledTestPlan) error {
 		return nil
 	}
 	q.Admission = nil
-	// 判题分组可选：未选分组时只按参考答案本地比对，一致即通过。
-	if j := q.Judge; j != nil && j.GroupID == 0 && strings.TrimSpace(j.ModelID) == "" {
+	// 判题分组可选：未选分组时只按参考答案本地比对，一致即通过。Jev 判题本就不带分组和模型，不能当成未配置。
+	if j := q.Judge; j != nil && j.Kind != "jev" && j.GroupID == 0 && strings.TrimSpace(j.ModelID) == "" {
 		q.Judge = nil
 	}
 	if j := q.Judge; j != nil {
-		if j.GroupID <= 0 || strings.TrimSpace(j.ModelID) == "" || len(j.ModelID) > 100 || strings.TrimSpace(j.Prompt) == "" || len(j.Prompt) > 16000 {
-			return fmt.Errorf("judge group, model and grading prompt are required (100/16000 byte limits)")
+		if strings.TrimSpace(j.Prompt) == "" || len(j.Prompt) > 16000 {
+			return fmt.Errorf("grading prompt must be 1-16000 bytes")
+		}
+		switch j.Kind {
+		case "", "llm":
+			if j.GroupID <= 0 || strings.TrimSpace(j.ModelID) == "" || len(j.ModelID) > 100 {
+				return fmt.Errorf("judge group, model and grading prompt are required (100/16000 byte limits)")
+			}
+		case "jev":
+			if j.GroupID != 0 || j.ModelID != "" {
+				return fmt.Errorf("jev grading reuses the audit profile; group and model must be empty")
+			}
+		default:
+			return fmt.Errorf("unsupported quality judge kind")
 		}
 	}
 	if plan.AutoRecover {

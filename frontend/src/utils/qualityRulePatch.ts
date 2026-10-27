@@ -3,6 +3,12 @@ import { DEFAULT_EXCEL_BPS_MODELS } from '@/constants/account'
 import { STATE_PROBE_QUESTION } from './intelligenceTest'
 import { DEFAULT_BPS_RECOVERY_INTERVAL_MINUTES, isValidBPSRecoveryInterval } from './excelBPSRecovery'
 
+export function qualityJudgeConfigured(judge?: QualityJudgeConfig): judge is QualityJudgeConfig {
+  if (!judge?.prompt.trim()) return false
+  if (judge.kind === 'jev') return !judge.group_id && !judge.model_id
+  return (!judge.kind || judge.kind === 'llm') && judge.group_id > 0 && !!judge.model_id.trim()
+}
+
 // 新建「降智开 BPS」时的默认勾选；target_group_id = -1 表示还没选 403 后的目标分组。
 export function defaultQualityBPS(): QualityBPSPolicy {
   return { failure_threshold: 2, usage_percent: 0, require_all: false, all_models: false, models: [...DEFAULT_EXCEL_BPS_MODELS],
@@ -43,7 +49,7 @@ export function copyQualityRuleConfig(source: PelicanTestConfig): PelicanTestCon
       remove_models: policy.remove_models ? [...policy.remove_models] : undefined,
       recovery_concurrency: policy.recovery_concurrency,
       auto_restore: policy.auto_restore,
-      judge: policy.judge ? { group_id: policy.judge.group_id, model_id: policy.judge.model_id, prompt: policy.judge.prompt } : undefined,
+      judge: policy.judge ? { ...(policy.judge.kind ? { kind: policy.judge.kind } : {}), group_id: policy.judge.group_id, model_id: policy.judge.model_id, prompt: policy.judge.prompt } : undefined,
       bps: bps ? {
         failure_threshold: bps.failure_threshold, usage_percent: bps.usage_percent, require_all: bps.require_all,
         all_models: bps.all_models, models: [...(bps.models || [])], omit_unsupported_tools: bps.omit_unsupported_tools,
@@ -91,11 +97,13 @@ export function qualityUsesModelResults(action?: QualityPolicy['action']) {
   return action === 'remove_models' || action === 'isolate_models'
 }
 
-// 判题分组可选：没选分组时不提交判题配置，只按参考答案比对；选了分组才要求模型和提示词。
+// 判题分组可选：普通判题没选分组时不提交判题配置，只按参考答案比对；选了分组才要求模型和提示词。
+// Jev 判题不带分组和模型，只要求提示词。
 export function qualityJudgePayload(judge?: QualityJudgeConfig): QualityJudgeConfig | undefined {
-  if (!judge?.group_id) return undefined
-  if (!judge.model_id.trim() || !judge.prompt.trim()) throw new Error('qualityOps.configureJudge')
-  return { group_id: judge.group_id, model_id: judge.model_id.trim(), prompt: judge.prompt }
+  if (!judge || (judge.kind !== 'jev' && !judge.group_id)) return undefined
+  const payload: QualityJudgeConfig = { ...(judge.kind ? { kind: judge.kind } : {}), group_id: judge.group_id, model_id: judge.model_id.trim(), prompt: judge.prompt }
+  if (!qualityJudgeConfigured(payload)) throw new Error('qualityOps.configureJudge')
+  return payload
 }
 
 // Used by single-account creation, templates and bulk editing. Action cleanup
@@ -138,7 +146,7 @@ export function qualityRuleFieldValue(rule: Pick<ScheduledTestPlan, 'model_id' |
     case 'schedule': return rule.cron_expression
     case 'enabled': return rule.enabled
     case 'test': return [cfg?.question_kind, cfg?.test_channel || 'account', cfg?.prompt, cfg?.reasoning_effort, cfg?.parallel_count,
-      q?.expected_answer, q?.judge?.group_id, q?.judge?.model_id, q?.judge?.prompt]
+      q?.expected_answer, q?.judge?.kind || 'llm', q?.judge?.group_id, q?.judge?.model_id, q?.judge?.prompt]
     case 'restore': return [q?.auto_restore, b?.pass_threshold, b?.hold_on_usage]
     case 'action': return [q?.action, q?.remove_group_ids || [], q?.remove_models || [], q?.recovery_concurrency,
       b ? [b.failure_threshold, b.usage_percent, b.require_all, b.all_models, b.models || [], b.omit_unsupported_tools,

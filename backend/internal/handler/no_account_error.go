@@ -49,6 +49,9 @@ func classifySelectionFailureError(err error, fallback noAccountErrorClassificat
 	if err == nil {
 		return fallback
 	}
+	if errors.Is(err, service.ErrPriorityLatencyUnavailable) {
+		return noAccountErrorClassification{Status: http.StatusServiceUnavailable, ErrType: "temporarily_unavailable", Code: "latency_penalty", Message: "Latency scheduling is temporarily unavailable; retry after 5 seconds"}
+	}
 	if errors.Is(err, service.ErrOpenAIRPMExhausted) {
 		return noAccountErrorClassification{
 			Status:  http.StatusTooManyRequests,
