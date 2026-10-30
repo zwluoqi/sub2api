@@ -286,14 +286,17 @@ type OpenAIForwardResult struct {
 	FirstTokenMs          *int
 	ClientDisconnect      bool
 	ImageCount            int
-	ImageSize             string
-	ImageInputSize        string
-	ImageOutputSize       string
-	ImageOutputSizes      []string
-	ImageSizeSource       string
-	ImageSizeBreakdown    map[string]int
-	VideoCount            int
-	VideoResolution       string
+	// ImageEndpoint 标记请求来自专用图片端点；分组 image_count_billing 开关
+	// 只对这类请求生效，混合 Responses/Chat/WS 请求仍按 token 计费。
+	ImageEndpoint      bool
+	ImageSize          string
+	ImageInputSize     string
+	ImageOutputSize    string
+	ImageOutputSizes   []string
+	ImageSizeSource    string
+	ImageSizeBreakdown map[string]int
+	VideoCount         int
+	VideoResolution    string
 	// VideoDurationSeconds 是提交时请求的生成时长（xAI 按输出秒数计费），已归一化到 1-15 秒。
 	VideoDurationSeconds int
 	// MiniMaxH3BaseCost is a server-only create-time tariff snapshot in USD.
@@ -416,12 +419,19 @@ type accountWriteThrottle struct {
 	minInterval time.Duration
 	mu          sync.Mutex
 	lastByID    map[int64]time.Time
+	pending     map[codexWriteKey]*codexPendingWrite
+	ctx         context.Context
+	cancel      context.CancelFunc
+	workers     sync.WaitGroup
+	closed      bool
 }
 
 func newAccountWriteThrottle(minInterval time.Duration) *accountWriteThrottle {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &accountWriteThrottle{
 		minInterval: minInterval,
 		lastByID:    make(map[int64]time.Time),
+		ctx:         ctx, cancel: cancel,
 	}
 }
 
@@ -550,6 +560,8 @@ type OpenAIGatewayService struct {
 	openaiWSRetryMetrics                openAIWSRetryMetrics
 	responseHeaderFilter                *responseheaders.CompiledHeaderFilter
 	codexSnapshotThrottle               *accountWriteThrottle
+	codexSnapshotMu                     sync.Mutex
+	codexSnapshotClosed                 bool
 	openAIModelsCache                   openAIModelsCache
 	excelBPSModelsCache                 openAIModelsCache
 	openaiCompatSessionResponses        sync.Map
@@ -775,10 +787,18 @@ func (s *OpenAIGatewayService) ReplaceModelInBody(body []byte, newModel string) 
 }
 
 func (s *OpenAIGatewayService) getCodexSnapshotThrottle() *accountWriteThrottle {
-	if s != nil && s.codexSnapshotThrottle != nil {
-		return s.codexSnapshotThrottle
+	if s == nil {
+		return defaultOpenAICodexSnapshotPersistThrottle
 	}
-	return defaultOpenAICodexSnapshotPersistThrottle
+	s.codexSnapshotMu.Lock()
+	defer s.codexSnapshotMu.Unlock()
+	if s.codexSnapshotThrottle == nil {
+		s.codexSnapshotThrottle = newAccountWriteThrottle(openAICodexSnapshotPersistMinInterval)
+		if s.codexSnapshotClosed {
+			s.codexSnapshotThrottle.close()
+		}
+	}
+	return s.codexSnapshotThrottle
 }
 
 func (s *OpenAIGatewayService) billingDeps() *billingDeps {
@@ -796,6 +816,15 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。
 // 应在应用优雅关闭时调用。
 func (s *OpenAIGatewayService) CloseOpenAIWSPool() {
+	if s != nil {
+		s.codexSnapshotMu.Lock()
+		s.codexSnapshotClosed = true
+		throttle := s.codexSnapshotThrottle
+		s.codexSnapshotMu.Unlock()
+		if throttle != nil {
+			throttle.close()
+		}
+	}
 	if s != nil && s.regionalMetering != nil && s.regionalMetering.Stop != nil {
 		s.regionalMetering.Stop()
 	}

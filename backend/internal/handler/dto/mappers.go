@@ -201,6 +201,7 @@ func groupFromServiceBase(g *service.Group) Group {
 		LongContextPricingEnabled:       g.LongContextPricingEnabled,
 		AllowImageGeneration:            g.AllowImageGeneration,
 		AllowBatchImageGeneration:       g.AllowBatchImageGeneration,
+		ImageCountBilling:               g.ImageCountBilling,
 		ImageRateIndependent:            g.ImageRateIndependent,
 		ImageRateMultiplier:             g.ImageRateMultiplier,
 		BatchImageDiscountMultiplier:    g.BatchImageDiscountMultiplier,
@@ -481,7 +482,8 @@ func AccountListItemFromAccount(a *Account) *AccountListItem {
 		return nil
 	}
 	return &AccountListItem{
-		ID: a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
+		UpstreamChannelBinding: a.UpstreamChannelBinding,
+		ID:                     a.ID, Name: a.Name, Notes: a.Notes, Platform: a.Platform, Type: a.Type,
 		Credentials: a.Credentials, CredentialsStatus: a.CredentialsStatus, Extra: a.Extra,
 		ExcelBPSCredentialState: a.ExcelBPSCredentialState,
 		OllamaCloudUsage:        a.OllamaCloudUsage, CodexTurnTickets: a.CodexTurnTickets,
