@@ -377,7 +377,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 	// Antigravity 平台：使用 AntigravityQuotaFetcher 获取额度
 	if account.Platform == PlatformAntigravity {
-		usage, err := s.getAntigravityUsage(ctx, account)
+		usage, err := s.getAntigravityUsage(ctx, account, forceProbe)
 		if err == nil {
 			s.tryClearRecoverableAccountError(ctx, account)
 		}
@@ -477,10 +477,12 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 		return usage, nil
 	}
 
-	// Setup Token账号：根据session_window推算（没有profile scope，无法调用usage API）
+	// Setup Token 没有 profile scope，复用响应头采样的窗口数据，不能主动调用 usage API。
 	if account.Type == AccountTypeSetupToken {
+		if supportsAnthropicPassiveUsage(account) {
+			return s.getPassiveUsageForAccount(ctx, account)
+		}
 		usage := s.estimateSetupTokenUsage(account)
-		// 添加窗口统计
 		s.addWindowStats(ctx, account, usage)
 		return usage, nil
 	}
@@ -491,7 +493,7 @@ func (s *AccountUsageService) getUsageForAccount(ctx context.Context, account *A
 
 // GetUsage 获取账号使用量
 // OAuth账号: 调用Anthropic API获取真实数据（需要profile scope），API响应缓存10分钟，窗口统计缓存1分钟
-// Setup Token账号: 根据session_window推算5h窗口，7d数据不可用（没有profile scope）
+// Setup Token账号: 返回响应头采样的5h/7d窗口；无5h采样时回退到session_window估算
 // API Key账号: 不支持usage查询
 func (s *AccountUsageService) GetUsage(ctx context.Context, accountID int64, force ...bool) (*UsageInfo, error) {
 	forceProbe := len(force) > 0 && force[0]
@@ -1040,41 +1042,45 @@ func (s *AccountUsageService) getGeminiUsage(ctx context.Context, account *Accou
 	return usage, nil
 }
 
-// getAntigravityUsage 获取 Antigravity 账户额度
-func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *Account) (*UsageInfo, error) {
+// cachedAntigravityUsage returns the account's cached usage while it is fresh, unless force is
+// set: a manual refresh (the usage cell's query button, force=true) must reach Google, or an
+// account upgraded or reset upstream keeps showing the old figures for the cache TTL.
+func (s *AccountUsageService) cachedAntigravityUsage(accountID int64, force bool) (*UsageInfo, bool) {
+	if force {
+		return nil, false
+	}
+	cached, ok := s.cache.antigravityCache.Load(accountID)
+	if !ok {
+		return nil, false
+	}
+	cache, ok := cached.(*antigravityUsageCache)
+	if !ok || time.Since(cache.timestamp) >= antigravityCacheTTL(cache.usageInfo) {
+		return nil, false
+	}
+	usage := cache.usageInfo
+	// 重新计算 RemainingSeconds，避免返回过时的剩余秒数
+	recalcAntigravityRemainingSeconds(usage)
+	return usage, true
+}
+
+// getAntigravityUsage 获取 Antigravity 账户额度；force 跳过缓存（仍经 singleflight 合并并发请求）。
+func (s *AccountUsageService) getAntigravityUsage(ctx context.Context, account *Account, force bool) (*UsageInfo, error) {
 	if s.antigravityQuotaFetcher == nil || !s.antigravityQuotaFetcher.CanFetch(account) {
 		now := time.Now()
 		return &UsageInfo{UpdatedAt: &now}, nil
 	}
 
 	// 1. 检查缓存
-	if cached, ok := s.cache.antigravityCache.Load(account.ID); ok {
-		if cache, ok := cached.(*antigravityUsageCache); ok {
-			ttl := antigravityCacheTTL(cache.usageInfo)
-			if time.Since(cache.timestamp) < ttl {
-				usage := cache.usageInfo
-				if usage.FiveHour != nil && usage.FiveHour.ResetsAt != nil {
-					usage.FiveHour.RemainingSeconds = int(time.Until(*usage.FiveHour.ResetsAt).Seconds())
-				}
-				return usage, nil
-			}
-		}
+	if usage, ok := s.cachedAntigravityUsage(account.ID, force); ok {
+		return usage, nil
 	}
 
 	// 2. singleflight 防止并发击穿
 	flightKey := fmt.Sprintf("ag-usage:%d", account.ID)
 	result, flightErr, _ := s.cache.antigravityFlight.Do(flightKey, func() (any, error) {
 		// 再次检查缓存（等待期间可能已被填充）
-		if cached, ok := s.cache.antigravityCache.Load(account.ID); ok {
-			if cache, ok := cached.(*antigravityUsageCache); ok {
-				ttl := antigravityCacheTTL(cache.usageInfo)
-				if time.Since(cache.timestamp) < ttl {
-					usage := cache.usageInfo
-					// 重新计算 RemainingSeconds，避免返回过时的剩余秒数
-					recalcAntigravityRemainingSeconds(usage)
-					return usage, nil
-				}
-			}
+		if usage, ok := s.cachedAntigravityUsage(account.ID, force); ok {
+			return usage, nil
 		}
 
 		// 使用独立 context，避免调用方 cancel 导致所有共享 flight 的请求失败
@@ -1797,7 +1803,6 @@ func (s *AccountUsageService) estimateSetupTokenUsage(account *Account) *UsageIn
 		}
 	}
 
-	// Setup Token无法获取7d数据
 	return info
 }
 

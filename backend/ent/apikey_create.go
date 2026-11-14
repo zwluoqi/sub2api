@@ -127,6 +127,54 @@ func (_c *APIKeyCreate) SetNillableStatus(v *string) *APIKeyCreate {
 	return _c
 }
 
+// SetModelMapping sets the "model_mapping" field.
+func (_c *APIKeyCreate) SetModelMapping(v map[string]string) *APIKeyCreate {
+	_c.mutation.SetModelMapping(v)
+	return _c
+}
+
+// SetReasoningEffort sets the "reasoning_effort" field.
+func (_c *APIKeyCreate) SetReasoningEffort(v string) *APIKeyCreate {
+	_c.mutation.SetReasoningEffort(v)
+	return _c
+}
+
+// SetNillableReasoningEffort sets the "reasoning_effort" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableReasoningEffort(v *string) *APIKeyCreate {
+	if v != nil {
+		_c.SetReasoningEffort(*v)
+	}
+	return _c
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (_c *APIKeyCreate) SetAllowLongContext(v bool) *APIKeyCreate {
+	_c.mutation.SetAllowLongContext(v)
+	return _c
+}
+
+// SetNillableAllowLongContext sets the "allow_long_context" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableAllowLongContext(v *bool) *APIKeyCreate {
+	if v != nil {
+		_c.SetAllowLongContext(*v)
+	}
+	return _c
+}
+
+// SetContextTokenLimit sets the "context_token_limit" field.
+func (_c *APIKeyCreate) SetContextTokenLimit(v int) *APIKeyCreate {
+	_c.mutation.SetContextTokenLimit(v)
+	return _c
+}
+
+// SetNillableContextTokenLimit sets the "context_token_limit" field if the given value is not nil.
+func (_c *APIKeyCreate) SetNillableContextTokenLimit(v *int) *APIKeyCreate {
+	if v != nil {
+		_c.SetContextTokenLimit(*v)
+	}
+	return _c
+}
+
 // SetLastUsedAt sets the "last_used_at" field.
 func (_c *APIKeyCreate) SetLastUsedAt(v time.Time) *APIKeyCreate {
 	_c.mutation.SetLastUsedAt(v)
@@ -405,6 +453,22 @@ func (_c *APIKeyCreate) defaults() error {
 		v := apikey.DefaultStatus
 		_c.mutation.SetStatus(v)
 	}
+	if _, ok := _c.mutation.ModelMapping(); !ok {
+		v := apikey.DefaultModelMapping
+		_c.mutation.SetModelMapping(v)
+	}
+	if _, ok := _c.mutation.ReasoningEffort(); !ok {
+		v := apikey.DefaultReasoningEffort
+		_c.mutation.SetReasoningEffort(v)
+	}
+	if _, ok := _c.mutation.AllowLongContext(); !ok {
+		v := apikey.DefaultAllowLongContext
+		_c.mutation.SetAllowLongContext(v)
+	}
+	if _, ok := _c.mutation.ContextTokenLimit(); !ok {
+		v := apikey.DefaultContextTokenLimit
+		_c.mutation.SetContextTokenLimit(v)
+	}
 	if _, ok := _c.mutation.Quota(); !ok {
 		v := apikey.DefaultQuota
 		_c.mutation.SetQuota(v)
@@ -481,6 +545,28 @@ func (_c *APIKeyCreate) check() error {
 	if v, ok := _c.mutation.Status(); ok {
 		if err := apikey.StatusValidator(v); err != nil {
 			return &ValidationError{Name: "status", err: fmt.Errorf(`ent: validator failed for field "APIKey.status": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.ModelMapping(); !ok {
+		return &ValidationError{Name: "model_mapping", err: errors.New(`ent: missing required field "APIKey.model_mapping"`)}
+	}
+	if _, ok := _c.mutation.ReasoningEffort(); !ok {
+		return &ValidationError{Name: "reasoning_effort", err: errors.New(`ent: missing required field "APIKey.reasoning_effort"`)}
+	}
+	if v, ok := _c.mutation.ReasoningEffort(); ok {
+		if err := apikey.ReasoningEffortValidator(v); err != nil {
+			return &ValidationError{Name: "reasoning_effort", err: fmt.Errorf(`ent: validator failed for field "APIKey.reasoning_effort": %w`, err)}
+		}
+	}
+	if _, ok := _c.mutation.AllowLongContext(); !ok {
+		return &ValidationError{Name: "allow_long_context", err: errors.New(`ent: missing required field "APIKey.allow_long_context"`)}
+	}
+	if _, ok := _c.mutation.ContextTokenLimit(); !ok {
+		return &ValidationError{Name: "context_token_limit", err: errors.New(`ent: missing required field "APIKey.context_token_limit"`)}
+	}
+	if v, ok := _c.mutation.ContextTokenLimit(); ok {
+		if err := apikey.ContextTokenLimitValidator(v); err != nil {
+			return &ValidationError{Name: "context_token_limit", err: fmt.Errorf(`ent: validator failed for field "APIKey.context_token_limit": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Quota(); !ok {
@@ -564,6 +650,22 @@ func (_c *APIKeyCreate) createSpec() (*APIKey, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Status(); ok {
 		_spec.SetField(apikey.FieldStatus, field.TypeString, value)
 		_node.Status = value
+	}
+	if value, ok := _c.mutation.ModelMapping(); ok {
+		_spec.SetField(apikey.FieldModelMapping, field.TypeJSON, value)
+		_node.ModelMapping = value
+	}
+	if value, ok := _c.mutation.ReasoningEffort(); ok {
+		_spec.SetField(apikey.FieldReasoningEffort, field.TypeString, value)
+		_node.ReasoningEffort = value
+	}
+	if value, ok := _c.mutation.AllowLongContext(); ok {
+		_spec.SetField(apikey.FieldAllowLongContext, field.TypeBool, value)
+		_node.AllowLongContext = value
+	}
+	if value, ok := _c.mutation.ContextTokenLimit(); ok {
+		_spec.SetField(apikey.FieldContextTokenLimit, field.TypeInt, value)
+		_node.ContextTokenLimit = value
 	}
 	if value, ok := _c.mutation.LastUsedAt(); ok {
 		_spec.SetField(apikey.FieldLastUsedAt, field.TypeTime, value)
@@ -838,6 +940,60 @@ func (u *APIKeyUpsert) SetStatus(v string) *APIKeyUpsert {
 // UpdateStatus sets the "status" field to the value that was provided on create.
 func (u *APIKeyUpsert) UpdateStatus() *APIKeyUpsert {
 	u.SetExcluded(apikey.FieldStatus)
+	return u
+}
+
+// SetModelMapping sets the "model_mapping" field.
+func (u *APIKeyUpsert) SetModelMapping(v map[string]string) *APIKeyUpsert {
+	u.Set(apikey.FieldModelMapping, v)
+	return u
+}
+
+// UpdateModelMapping sets the "model_mapping" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateModelMapping() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldModelMapping)
+	return u
+}
+
+// SetReasoningEffort sets the "reasoning_effort" field.
+func (u *APIKeyUpsert) SetReasoningEffort(v string) *APIKeyUpsert {
+	u.Set(apikey.FieldReasoningEffort, v)
+	return u
+}
+
+// UpdateReasoningEffort sets the "reasoning_effort" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateReasoningEffort() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldReasoningEffort)
+	return u
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsert) SetAllowLongContext(v bool) *APIKeyUpsert {
+	u.Set(apikey.FieldAllowLongContext, v)
+	return u
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateAllowLongContext() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldAllowLongContext)
+	return u
+}
+
+// SetContextTokenLimit sets the "context_token_limit" field.
+func (u *APIKeyUpsert) SetContextTokenLimit(v int) *APIKeyUpsert {
+	u.Set(apikey.FieldContextTokenLimit, v)
+	return u
+}
+
+// UpdateContextTokenLimit sets the "context_token_limit" field to the value that was provided on create.
+func (u *APIKeyUpsert) UpdateContextTokenLimit() *APIKeyUpsert {
+	u.SetExcluded(apikey.FieldContextTokenLimit)
+	return u
+}
+
+// AddContextTokenLimit adds v to the "context_token_limit" field.
+func (u *APIKeyUpsert) AddContextTokenLimit(v int) *APIKeyUpsert {
+	u.Add(apikey.FieldContextTokenLimit, v)
 	return u
 }
 
@@ -1286,6 +1442,69 @@ func (u *APIKeyUpsertOne) SetStatus(v string) *APIKeyUpsertOne {
 func (u *APIKeyUpsertOne) UpdateStatus() *APIKeyUpsertOne {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetModelMapping sets the "model_mapping" field.
+func (u *APIKeyUpsertOne) SetModelMapping(v map[string]string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetModelMapping(v)
+	})
+}
+
+// UpdateModelMapping sets the "model_mapping" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateModelMapping() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateModelMapping()
+	})
+}
+
+// SetReasoningEffort sets the "reasoning_effort" field.
+func (u *APIKeyUpsertOne) SetReasoningEffort(v string) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetReasoningEffort(v)
+	})
+}
+
+// UpdateReasoningEffort sets the "reasoning_effort" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateReasoningEffort() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateReasoningEffort()
+	})
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsertOne) SetAllowLongContext(v bool) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowLongContext(v)
+	})
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateAllowLongContext() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowLongContext()
+	})
+}
+
+// SetContextTokenLimit sets the "context_token_limit" field.
+func (u *APIKeyUpsertOne) SetContextTokenLimit(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetContextTokenLimit(v)
+	})
+}
+
+// AddContextTokenLimit adds v to the "context_token_limit" field.
+func (u *APIKeyUpsertOne) AddContextTokenLimit(v int) *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddContextTokenLimit(v)
+	})
+}
+
+// UpdateContextTokenLimit sets the "context_token_limit" field to the value that was provided on create.
+func (u *APIKeyUpsertOne) UpdateContextTokenLimit() *APIKeyUpsertOne {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateContextTokenLimit()
 	})
 }
 
@@ -1945,6 +2164,69 @@ func (u *APIKeyUpsertBulk) SetStatus(v string) *APIKeyUpsertBulk {
 func (u *APIKeyUpsertBulk) UpdateStatus() *APIKeyUpsertBulk {
 	return u.Update(func(s *APIKeyUpsert) {
 		s.UpdateStatus()
+	})
+}
+
+// SetModelMapping sets the "model_mapping" field.
+func (u *APIKeyUpsertBulk) SetModelMapping(v map[string]string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetModelMapping(v)
+	})
+}
+
+// UpdateModelMapping sets the "model_mapping" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateModelMapping() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateModelMapping()
+	})
+}
+
+// SetReasoningEffort sets the "reasoning_effort" field.
+func (u *APIKeyUpsertBulk) SetReasoningEffort(v string) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetReasoningEffort(v)
+	})
+}
+
+// UpdateReasoningEffort sets the "reasoning_effort" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateReasoningEffort() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateReasoningEffort()
+	})
+}
+
+// SetAllowLongContext sets the "allow_long_context" field.
+func (u *APIKeyUpsertBulk) SetAllowLongContext(v bool) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetAllowLongContext(v)
+	})
+}
+
+// UpdateAllowLongContext sets the "allow_long_context" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateAllowLongContext() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateAllowLongContext()
+	})
+}
+
+// SetContextTokenLimit sets the "context_token_limit" field.
+func (u *APIKeyUpsertBulk) SetContextTokenLimit(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.SetContextTokenLimit(v)
+	})
+}
+
+// AddContextTokenLimit adds v to the "context_token_limit" field.
+func (u *APIKeyUpsertBulk) AddContextTokenLimit(v int) *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.AddContextTokenLimit(v)
+	})
+}
+
+// UpdateContextTokenLimit sets the "context_token_limit" field to the value that was provided on create.
+func (u *APIKeyUpsertBulk) UpdateContextTokenLimit() *APIKeyUpsertBulk {
+	return u.Update(func(s *APIKeyUpsert) {
+		s.UpdateContextTokenLimit()
 	})
 }
 

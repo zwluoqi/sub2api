@@ -145,7 +145,11 @@ func applyOpenAIReasoningEffortPolicyForRequest(c *gin.Context, apiKey *service.
 	if !ok {
 		return body, false, nil
 	}
-	return service.ApplyOpenAIReasoningEffortPolicy(body, maxEffort, mappings, overLimit, requestModel)
+	forced := ""
+	if apiKey != nil && effectiveAPIKeyPlatform(c, apiKey) == service.PlatformOpenAI {
+		forced = apiKey.ReasoningEffort
+	}
+	return service.ApplyAPIKeyOpenAIReasoningEffortPolicy(body, forced, maxEffort, mappings, overLimit, requestModel)
 }
 
 func respondOpenAIReasoningEffortPolicyError(c *gin.Context, err error, write func(*gin.Context, int, string, string)) {
@@ -170,8 +174,19 @@ func prepareOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey
 	}
 	requestModel := clientRequestedModel(c, gjson.GetBytes(body, "model").String())
 	bindRequestedReasoningEffort(c, body, requestModel)
+	isCNTarget := service.IsCNProvider(effectiveAPIKeyPlatform(c, apiKey))
+	if isCNTarget {
+		effort := gjson.GetBytes(body, "output_config.effort")
+		if effort.Type != gjson.String || strings.TrimSpace(effort.String()) == "" {
+			return body, nil
+		}
+	}
 	maxEffort, mappings, overLimit, ok := openAIReasoningEffortPolicyForRequest(c, apiKey)
 	if !ok {
+		return body, nil
+	}
+	if apiKey.ReasoningEffort != "" && effectiveAPIKeyPlatform(c, apiKey) == service.PlatformOpenAI {
+		c.Request = c.Request.WithContext(service.WithAPIKeyOpenAIReasoningEffortPolicy(c.Request.Context(), apiKey.ReasoningEffort, maxEffort, mappings, overLimit, requestModel))
 		return body, nil
 	}
 	// The Messages bridge synthesizes a default OpenAI effort when
@@ -182,7 +197,8 @@ func prepareOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey
 		// An explicit ultra model suffix is a client preference, not a bridge
 		// default. Enforce it before conversion or account/model normalization.
 		requested := service.CanonicalRequestedReasoningEffort(nil, requestModel)
-		if requested == nil || *requested != "ultra" {
+		if requested == nil || *requested != "ultra" || gjson.GetBytes(body, "thinking.type").String() == "disabled" {
+			c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicyForMessages(c.Request.Context(), body, maxEffort, mappings, overLimit, requestModel))
 			return body, nil
 		}
 		payload, err := sjson.SetBytes(body, "output_config.effort", "ultra")
@@ -197,6 +213,6 @@ func prepareOpenAIReasoningEffortPolicyForMessagesRequest(c *gin.Context, apiKey
 		// turn ultra -> high -> low instead of applying one mapping.
 		return updated, nil
 	}
-	c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicy(c.Request.Context(), maxEffort, mappings, overLimit, requestModel))
+	c.Request = c.Request.WithContext(service.WithOpenAIReasoningEffortPolicyForMessages(c.Request.Context(), body, maxEffort, mappings, overLimit, requestModel))
 	return body, nil
 }

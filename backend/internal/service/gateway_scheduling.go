@@ -438,7 +438,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			for _, acc := range routingCandidates {
 				routingLoads = append(routingLoads, AccountWithConcurrency{
 					ID:             acc.ID,
-					MaxConcurrency: acc.EffectiveLoadFactor(),
+					MaxConcurrency: acc.Concurrency,
 				})
 			}
 			routingLoadMap, _ := s.concurrencyService.GetAccountsLoadBatch(ctx, routingLoads)
@@ -462,8 +462,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if a.account.Priority != b.account.Priority {
 						return a.account.Priority < b.account.Priority
 					}
-					if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
-						return a.loadInfo.LoadRate < b.loadInfo.LoadRate
+					aLoad := accountLoadPreferenceRate(a.account, a.loadInfo.LoadRate)
+					bLoad := accountLoadPreferenceRate(b.account, b.loadInfo.LoadRate)
+					if aLoad != bLoad {
+						return aLoad < bLoad
 					}
 					switch {
 					case a.account.LastUsedAt == nil && b.account.LastUsedAt != nil:
@@ -709,7 +711,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	for _, acc := range candidates {
 		accountLoads = append(accountLoads, AccountWithConcurrency{
 			ID:             acc.ID,
-			MaxConcurrency: acc.EffectiveLoadFactor(),
+			MaxConcurrency: acc.Concurrency,
 		})
 	}
 
@@ -1551,6 +1553,11 @@ func (s *GatewayService) hydrateSelectedAccount(ctx context.Context, account *Ac
 func (s *GatewayService) newSelectionResult(ctx context.Context, account *Account, acquired bool, release func(), waitPlan *AccountWaitPlan) (*AccountSelectionResult, error) {
 	hydrated, err := s.hydrateSelectedAccount(ctx, account)
 	if err != nil {
+		// release 只在成功结果里返回给调用方；hydrate 失败时这里不释放的话，
+		// 已从 Redis 占用的槽位会一直泄漏到 TTL 到期。
+		if release != nil {
+			release()
+		}
 		return nil, err
 	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
@@ -1586,15 +1593,16 @@ func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 	if len(accounts) == 0 {
 		return accounts
 	}
-	minLoadRate := accounts[0].loadInfo.LoadRate
+	minLoadRate := accountLoadPreferenceRate(accounts[0].account, accounts[0].loadInfo.LoadRate)
 	for _, acc := range accounts[1:] {
-		if acc.loadInfo.LoadRate < minLoadRate {
-			minLoadRate = acc.loadInfo.LoadRate
+		loadRate := accountLoadPreferenceRate(acc.account, acc.loadInfo.LoadRate)
+		if loadRate < minLoadRate {
+			minLoadRate = loadRate
 		}
 	}
 	result := make([]accountWithLoad, 0, len(accounts))
 	for _, acc := range accounts {
-		if acc.loadInfo.LoadRate == minLoadRate {
+		if accountLoadPreferenceRate(acc.account, acc.loadInfo.LoadRate) == minLoadRate {
 			result = append(result, acc)
 		}
 	}
@@ -1743,7 +1751,7 @@ func sameAccountWithLoadGroup(a, b accountWithLoad) bool {
 	if a.account.Priority != b.account.Priority {
 		return false
 	}
-	if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
+	if accountLoadPreferenceRate(a.account, a.loadInfo.LoadRate) != accountLoadPreferenceRate(b.account, b.loadInfo.LoadRate) {
 		return false
 	}
 	return sameLastUsedAt(a.account.LastUsedAt, b.account.LastUsedAt)
@@ -2608,6 +2616,9 @@ func summarizeSelectionFailureStats(stats selectionFailureStats) string {
 // isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
 // 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
 func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
+	if account.Platform == PlatformAntigravity && account.hasOAuthInitialModelSelection() && !account.IsModelSupported(strings.TrimPrefix(requestedModel, "models/")) {
+		return false
+	}
 	if source, ok := CompositeRouteSourceFromContext(ctx); ok && source == CompositeRouteSourceAccount {
 		if publicModel, modelOK := RequestedPublicModelFromContext(ctx); modelOK && !explicitModelMappingClaims(*account, publicModel) {
 			return false
@@ -2643,6 +2654,15 @@ func (s *GatewayService) isModelSupportedByAccountInGroup(ctx context.Context, a
 
 // isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）
 func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
+	if account.Platform == PlatformAnthropic && account.Type == AccountTypeOAuth {
+		requestedModel = claude.NormalizeModelID(requestedModel)
+	}
+	if account.Platform == PlatformAntigravity {
+		requestedModel = strings.TrimPrefix(requestedModel, "models/")
+	}
+	if account.hasOAuthInitialModelSelection() && !account.IsModelSupported(requestedModel) {
+		return false
+	}
 	if account.Platform == PlatformAntigravity {
 		if strings.TrimSpace(requestedModel) == "" {
 			return true

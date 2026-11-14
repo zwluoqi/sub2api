@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
@@ -14,13 +15,31 @@ func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 // doOpenAIUpstream 只在 OpenAI OAuth 能力绑定已启用时把真实请求交给插件。
 // 插件返回标准 http.Response，响应解析、错误映射、SSE 和计费仍由现有核心链处理。
 func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL string, account *Account) (result *http.Response, resultErr error) {
+	if s.excelOAuthReauth != nil {
+		if err := s.excelOAuthReauth.validateAuthConnectionPolicy(request.Context(), account); err != nil {
+			return nil, err
+		}
+	}
+	if account != nil && account.AuthConnectionID != "" {
+		if s.excelOAuthReauth == nil {
+			return nil, fmt.Errorf("authorization connection service unavailable")
+		}
+		if err := s.excelOAuthReauth.ValidateAuthConnectionSend(request.Context(), account); err != nil {
+			return nil, err
+		}
+	}
 	var phaseGuard *openAIHTTPPhaseGuard
 	request, phaseGuard = s.guardOpenAIHTTPRequest(request, account)
+	request, finishHeaderTimeout := guardOpenAIResponseHeaderTimeout(request, account)
 	defer func() {
 		if result != nil && result.Request == nil {
 			result.Request = request
 		}
+		if result != nil && result.Request != nil {
+			result.Request = result.Request.WithContext(context.WithValue(result.Request.Context(), openAI429WeeklyObservedAtKey{}, time.Now()))
+		}
 		result, resultErr = phaseGuard.finish(result, resultErr)
+		resultErr = finishHeaderTimeout(result, resultErr)
 	}()
 	if phaseGuard != nil && phaseGuard.ctx.Err() != nil {
 		return nil, context.Cause(phaseGuard.ctx)
@@ -41,6 +60,9 @@ func (s *OpenAIGatewayService) doOpenAIUpstream(request *http.Request, proxyURL 
 		applySIWCRequestHeaders(request)
 		request.Host = ""
 		if err := s.priorityLatencyBeforeSend(request.Context(), account); err != nil {
+			return nil, err
+		}
+		if err := s.fenceAuthConnectionEgress(request.Context(), request, account); err != nil {
 			return nil, err
 		}
 		observeAttempt := s.observePriorityAttempt(request, account)
@@ -134,11 +156,19 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 	if s.pluginManager != nil {
 		response, handled, err := s.pluginManager.RoundTripOpenAIOAuth(request.Context(), request, proxyURL, account)
 		if handled {
+			if options, ok := pelicanTestOptionsFromContext(request.Context()); ok && options.nativeOAuthTransport != nil && !IsAstraSourceAcquisition(request.Context()) {
+				*options.nativeOAuthTransport = false
+			}
 			return response, err
 		}
 	}
+	// Ticket admission (including donor tickets) and handled plugin requests
+	// returned above. Only this native transport may certify an own OAuth 401.
+	if options, ok := pelicanTestOptionsFromContext(request.Context()); ok && options.nativeOAuthTransport != nil && !IsAstraSourceAcquisition(request.Context()) {
+		*options.nativeOAuthTransport = true
+	}
 	if useTLSFallback {
-		return s.httpUpstream.DoWithTLS(
+		return timedAccountTestUpstream(s.httpUpstream).DoWithTLS(
 			request,
 			proxyURL,
 			account.ID,
@@ -146,5 +176,5 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 			s.tlsFPProfileService.ResolveTLSProfile(account),
 		)
 	}
-	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
+	return timedAccountTestUpstream(s.httpUpstream).Do(request, proxyURL, account.ID, account.Concurrency)
 }

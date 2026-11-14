@@ -254,6 +254,18 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/lottery',
+    name: 'Lottery',
+    component: () => import('@/views/user/LotteryView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'Recharge Draws', titleKey: 'lottery.title' }
+  },
+  {
+    path: '/admin/lottery',
+    name: 'AdminLottery',
+    component: () => import('@/views/admin/LotteryView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true, title: 'Prize Draw Management', titleKey: 'lottery.adminTitle' }
+  },
+  {
     path: '/affiliate',
     name: 'Affiliate',
     component: () => import('@/views/user/AffiliateView.vue'),
@@ -373,6 +385,18 @@ const routes: RouteRecordRaw[] = [
       requiresAdmin: false,
       title: 'Payment Result',
       titleKey: 'payment.result.success',
+      requiresPayment: false
+    }
+  },
+  {
+    path: '/payment/crypto/:outTradeNo',
+    name: 'CryptoPayment',
+    component: () => import('@/views/user/CryptoPaymentView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: false,
+      title: 'Crypto Payment',
+      titleKey: 'payment.cryptoCheckout.title',
       requiresPayment: false
     }
   },
@@ -564,6 +588,7 @@ const routes: RouteRecordRaw[] = [
   { path: '/admin/upstream-channels', name: 'AdminUpstreamChannels', component: () => import('@/views/admin/UpstreamChannelsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'upstreamEntities.title', descriptionKey: 'upstreamEntities.history' } },
   { path: '/admin/profit-operations', name: 'AdminProfitOperations', component: () => import('@/views/admin/ProfitOperationsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, titleKey: 'profitOps.title', descriptionKey: 'profitOps.description' } },
   { path: '/admin/smart-ops', redirect: '/admin/account-quality', meta: { requiresAuth: true, requiresAdmin: true } },
+  { path: '/admin/ai-ops', name: 'AdminAIOps', component: () => import('@/views/admin/AIOpsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'AI operations', titleKey: 'aiOps.title', descriptionKey: 'aiOps.description' } },
   { path: '/admin/controlled-experiments', name: 'AdminControlledExperiments', component: () => import('@/views/admin/ControlledExperimentsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Controlled experiments', titleKey: 'controlledExperiments.title', descriptionKey: 'controlledExperiments.description' } },
   { path: '/admin/token-guard', name: 'AdminTokenGuard', component: () => import('@/views/admin/ops/TokenGuardView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Credential Guard', titleKey: 'tokenGuard.title', descriptionKey: 'tokenGuard.description' } },
   { path: '/admin/pelican-tests', name: 'AdminPelicanTests', component: () => import('@/views/admin/PelicanTestsView.vue'), meta: { requiresAuth: true, requiresAdmin: true, title: 'Pelican Showcase', titleKey: 'pelicanTests.title', descriptionKey: 'pelicanTests.description' } },

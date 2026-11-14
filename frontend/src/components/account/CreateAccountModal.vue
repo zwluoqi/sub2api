@@ -260,7 +260,9 @@
             :class="[
               'flex flex-1 items-center justify-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-all',
               form.platform === spec.id
-                ? 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
+                ? spec.id === 'mistral'
+                  ? 'bg-white text-orange-600 shadow-sm dark:bg-dark-600 dark:text-orange-400'
+                  : 'bg-white text-primary-600 shadow-sm dark:bg-dark-600 dark:text-primary-400'
                 : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200'
             ]"
           >
@@ -269,6 +271,9 @@
           </button>
         </div>
       </div>
+
+      <QwenPlatformNotice :user-id="authStore.user?.id" />
+      <QwenCacheSettings v-if="form.platform === 'qwen'" v-model:session-cache="qwenSessionCache" v-model:strict-affinity="qwenStrictAffinity" :user-id="authStore.user?.id" @base-url="setQwenBaseUrl" />
 
       <!-- Account Type Selection (Anthropic) -->
       <div v-if="form.platform === 'anthropic'">
@@ -1691,7 +1696,7 @@
             <div v-if="modelRestrictionMode === 'whitelist'">
               <ModelWhitelistSelector
                 v-model="allowedModels"
-                :model-mappings="modelMappings"
+                @update:model-mappings="modelMappings = $event"
                 :platform="form.platform"
                 :sync-credentials="syncPreviewCredentials"
                 @upstream-synced="upstreamModelsPreviewed = true"
@@ -2221,7 +2226,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
-              :model-mappings="modelMappings"
+              @update:model-mappings="modelMappings = $event"
               platform="anthropic"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -2563,7 +2568,7 @@
           <div v-if="modelRestrictionMode === 'whitelist'">
             <ModelWhitelistSelector
               v-model="allowedModels"
-              :model-mappings="modelMappings"
+              @update:model-mappings="modelMappings = $event"
               :platform="form.platform"
               :sync-credentials="syncPreviewCredentials"
               @upstream-synced="upstreamModelsPreviewed = true"
@@ -3436,6 +3441,50 @@
         </div>
       </div>
 
+      <!-- Anthropic API Key 模拟 Claude Code 客户端开关（与抹除身份互斥） -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.mimicClaudeCode') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.mimicClaudeCodeDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="anthropic-mimic-claude-code-toggle"
+            @click="anthropicMimicClaudeCodeEnabled = !anthropicMimicClaudeCodeEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              anthropicMimicClaudeCodeEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                anthropicMimicClaudeCodeEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+        <div v-if="anthropicMimicClaudeCodeEnabled" class="mt-4 flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.mimicClaudeCodeDeductTokens') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.mimicClaudeCodeDeductTokensDesc') }}
+            </p>
+          </div>
+          <Toggle
+            v-model="anthropicMimicClaudeCodeDeductTokens"
+            data-testid="anthropic-mimic-claude-code-deduct-tokens-toggle"
+            :aria-label="t('admin.accounts.anthropic.mimicClaudeCodeDeductTokens')"
+          />
+        </div>
+      </div>
+
       <div
         v-if="form.platform === 'anthropic' && accountCategory === 'apikey'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
@@ -3501,6 +3550,38 @@
               :class="[
                 'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
                 openAILongContextBillingEnabled ? 'translate-x-5' : 'translate-x-0'
+              ]"
+            />
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="form.platform === 'openai' && accountCategory === 'apikey'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.openai.ultrafastBilling') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.openai.ultrafastBillingDesc') }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-testid="create-openai-ultrafast-billing-toggle"
+            role="switch"
+            :aria-checked="openAIResponseTierBillingEnabled"
+            @click="openAIResponseTierBillingEnabled = !openAIResponseTierBillingEnabled"
+            :class="[
+              'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+              openAIResponseTierBillingEnabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-dark-600'
+            ]"
+          >
+            <span
+              :class="[
+                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out',
+                openAIResponseTierBillingEnabled ? 'translate-x-5' : 'translate-x-0'
               ]"
             />
           </button>
@@ -4153,6 +4234,9 @@
 </template>
 
 <script setup lang="ts">
+import QwenPlatformNotice from '@/components/common/QwenPlatformNotice.vue'
+import QwenCacheSettings from './QwenCacheSettings.vue'
+import { applyQwenCacheSettings } from './qwenCacheSettings'
 import OpenAIRequestTimezoneField from '@/components/account/OpenAIRequestTimezoneField.vue'
 import ExtraImageModelsField from '@/components/account/ExtraImageModelsField.vue'
 import { parseExtraImageModels } from '@/utils/extraImageModels'
@@ -4370,6 +4454,8 @@ const apiKeyValuePlaceholder = computed(() => {
       return 'sk-...'
     case 'typesafe':
       return 'ts-...'
+    case 'mistral':
+      return 'API Key'
     default:
       return isMultiProtocolPlatform.value ? 'sk-...' : 'sk-ant-...'
   }
@@ -4458,6 +4544,7 @@ const openaiTwoFA = ref(false)
 const openaiBPSOAuth = ref(false)
 const bpsOAuthModels = ref<string[]>([...DEFAULT_EXCEL_BPS_MODELS])
 const isOpenAIBPSOAuth = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiBPSOAuth.value)
+// Includes unresolved login ownership while the importer is paused for Retry.
 const twoFABusy = ref(false)
 const isOpenAITwoFA = computed(() => form.platform === 'openai' && accountCategory.value === 'oauth-based' && openaiTwoFA.value)
 // 「降智后自动开启 BPS」：OpenAI OAuth / 2FA 添加时可选，账号建好后按这里的设置给每个新账号建一条质量运维规则。
@@ -4554,6 +4641,8 @@ const cnAccentActiveClass = computed(() => {
       return 'border-rose-500 bg-rose-50 dark:bg-rose-900/20'
     case 'opencode_go':
       return 'border-amber-500 bg-amber-50 dark:bg-amber-900/20'
+    case 'mistral':
+      return 'border-orange-500 bg-orange-50 dark:bg-orange-900/20'
     default:
       return 'border-primary-500 bg-primary-50 dark:bg-primary-900/20'
   }
@@ -4570,6 +4659,8 @@ const cnAccentIconClass = computed(() => {
       return 'bg-rose-500 text-white'
     case 'opencode_go':
       return 'bg-amber-500 text-white'
+    case 'mistral':
+      return 'bg-orange-500 text-white'
     default:
       return 'bg-primary-500 text-white'
   }
@@ -4736,6 +4827,12 @@ const customErrorCodesEnabled = ref(false)
 const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const headerOverrideEnabled = ref(false)
+const qwenSessionCache = ref(false)
+const qwenStrictAffinity = ref(false)
+const setQwenBaseUrl = (value: string) => {
+  apiKeyBaseUrl.value = value
+  adaptiveBaseUrls.value.chat_completions = value
+}
 const headerOverrideRows = ref<HeaderOverrideRow[]>([])
 
 // Grok OAuth：自定义上游地址（base_url 仅改写转发端点，OAuth 授权/刷新不受影响）
@@ -4784,6 +4881,7 @@ const openaiPassthroughEnabled = ref(false)
 const openaiFlattenNamespacesEnabled = ref(false)
 const openAILongContextBillingEnabled = ref(false)
 const openAILongContextBillingTouched = ref(false)
+const openAIResponseTierBillingEnabled = ref(false)
 const openAICompactMode = ref<OpenAICompactMode>('auto')
 const openAIResponsesMode = ref<OpenAIResponsesMode>('auto')
 // Images 非流式响应缺 b64_json 时由网关下载 url 回填（仅 OpenAI API Key）。
@@ -4805,6 +4903,21 @@ const codexFingerprintModeOptions = computed(() => [
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 const anthropicPassthroughEnabled = ref(false)
 const anthropicStripClaudeCodeIdentityEnabled = ref(false)
+const anthropicMimicClaudeCodeEnabled = ref(false)
+const anthropicMimicClaudeCodeDeductTokens = ref(false)
+// 「模拟 Claude Code」与「抹除 Claude Code 身份」互斥：打开一个就关掉另一个
+watch(anthropicMimicClaudeCodeEnabled, (enabled) => {
+  if (enabled) {
+    anthropicStripClaudeCodeIdentityEnabled.value = false
+  } else {
+    anthropicMimicClaudeCodeDeductTokens.value = false
+  }
+})
+watch(anthropicStripClaudeCodeIdentityEnabled, (enabled) => {
+  if (enabled) {
+    anthropicMimicClaudeCodeEnabled.value = false
+  }
+})
 const anthropicAPIKeyAuthScheme = ref<AnthropicAPIKeyAuthScheme>('x_api_key')
 const webSearchEmulationMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
@@ -5168,7 +5281,7 @@ watch(
         .then(profiles => { tlsFingerprintProfiles.value = profiles.map(p => ({ id: p.id, name: p.name })) })
         .catch(() => { tlsFingerprintProfiles.value = [] })
       // Modal opened - fill related models
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
       if (form.platform === 'antigravity') {
         antigravityModelRestrictionMode.value = 'mapping'
@@ -5304,6 +5417,8 @@ watch(
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       anthropicStripClaudeCodeIdentityEnabled.value = false
+      anthropicMimicClaudeCodeEnabled.value = false
+      anthropicMimicClaudeCodeDeductTokens.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5335,6 +5450,8 @@ watch(
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
       anthropicStripClaudeCodeIdentityEnabled.value = false
+      anthropicMimicClaudeCodeEnabled.value = false
+      anthropicMimicClaudeCodeDeductTokens.value = false
       anthropicAPIKeyAuthScheme.value = 'x_api_key'
       webSearchEmulationMode.value = 'default'
     }
@@ -5370,7 +5487,7 @@ watch(
   [modelRestrictionMode, () => form.platform],
   ([newMode]) => {
     if (newMode === 'whitelist') {
-      allowedModels.value = [...getModelsByPlatform(form.platform)]
+      allowedModels.value = form.platform === 'qwen' ? [] : [...getModelsByPlatform(form.platform)]
     }
   }
 )
@@ -5642,20 +5759,29 @@ const ensureAntigravityMixedChannelConfirmed = async (onConfirm: () => Promise<v
 
 const initialChannelId = ref(0), initialChannelConfirmed = ref(false)
 const pendingChannelCreations = new Map<string, unknown>()
-async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false): Promise<T> {
+async function runChannelCreation<T>(kind: string, payload: unknown, operation: () => Promise<T>, ids: (value: T) => number[], atomic = false, signal?: AbortSignal): Promise<T> {
+ signal?.throwIfAborted()
  if (!initialChannelId.value) return operation()
  if (!initialChannelConfirmed.value) throw new Error(t('upstreamEntities.confirmCreate'))
  const target = initialChannelId.value, key = JSON.stringify([kind, target, payload])
  let result = pendingChannelCreations.get(key) as T | undefined
  if (!result) { result = await operation(); pendingChannelCreations.set(key, result) }
+ signal?.throwIfAborted()
  const accounts = ids(result)
  for (let i = 0; i < accounts.length; i += 100) {
   const batch = accounts.slice(i, i + 100)
-  const current = await readChannelBindings(batch)
+  signal?.throwIfAborted()
+  const current = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (current.length !== batch.length || current.some(b => b.channel_id !== target && (atomic || b.channel_id !== 0))) throw new Error(t('upstreamEntities.createReadbackFailed'))
   const unbound = current.filter(b => b.channel_id === 0)
-  if (unbound.length) await bindChannelAccounts(target, unbound)
-  const readback = await readChannelBindings(batch)
+  if (unbound.length) {
+    if (signal) await bindChannelAccounts(target, unbound, { signal })
+    else await bindChannelAccounts(target, unbound)
+  }
+  signal?.throwIfAborted()
+  const readback = await (signal ? readChannelBindings(batch, { signal }) : readChannelBindings(batch))
+  signal?.throwIfAborted()
   if (readback.length !== batch.length || readback.some(b => b.channel_id !== target)) throw new Error(t('upstreamEntities.createReadbackFailed'))
  }
  pendingChannelCreations.delete(key)
@@ -5665,12 +5791,12 @@ function createAccountWithUpstream(payload: CreateAccountRequest) {
  const selected = initialChannelId.value > 0 ? { upstream_channel_id: initialChannelId.value, confirm_upstream_channel_binding: initialChannelConfirmed.value } : {}
  return runChannelCreation('account', payload, () => adminAPI.accounts.create({ ...payload, ...selected }), a => [a.id], true)
 }
-function importWithUpstream(payload: UpstreamImportRequest) {
- return runChannelCreation('import', payload, () => adminAPI.accounts.importCodexSession(payload), result => {
+function importWithUpstream(payload: UpstreamImportRequest, signal?: AbortSignal) {
+ return runChannelCreation('import', payload, () => signal ? adminAPI.accounts.importCodexSession(payload, { signal }) : adminAPI.accounts.importCodexSession(payload), result => {
   const ids = (result.items || []).filter(item => item.action === 'created' && item.account_id).map(item => item.account_id!)
   if (initialChannelId.value && ids.length !== result.created) throw new Error(t('upstreamEntities.createReadbackFailed'))
   return ids
- })
+ }, false, signal)
 }
 function createPATWithUpstream(payload: UpstreamPATRequest) { return runChannelCreation('pat', payload, () => adminAPI.accounts.createOpenAICodexPAT(payload), a => [a.id]) }
 function createGrokWithUpstream(payload: Parameters<typeof adminAPI.grok.createFromSSO>[0]) {
@@ -5738,6 +5864,8 @@ const submitCreateAccount = async (payload: CreateAccountRequest) => {
 
 // Methods
 const resetForm = () => {
+  qwenSessionCache.value = false
+  qwenStrictAffinity.value = false
   initialChannelId.value = 0
   initialChannelConfirmed.value = false
   pendingChannelCreations.clear()
@@ -5813,6 +5941,7 @@ const resetForm = () => {
   openaiFlattenNamespacesEnabled.value = false
   openAILongContextBillingEnabled.value = false
   openAILongContextBillingTouched.value = false
+  openAIResponseTierBillingEnabled.value = false
   openAICompactMode.value = 'auto'
   openAIResponsesMode.value = 'auto'
   openAIEndpointCapabilities.value = ['chat_completions', 'embeddings']
@@ -5824,6 +5953,8 @@ const resetForm = () => {
   codexFingerprintMode.value = 'off'
   anthropicPassthroughEnabled.value = false
   anthropicStripClaudeCodeIdentityEnabled.value = false
+  anthropicMimicClaudeCodeEnabled.value = false
+  anthropicMimicClaudeCodeDeductTokens.value = false
   anthropicAPIKeyAuthScheme.value = 'x_api_key'
   webSearchEmulationMode.value = 'default'
   // Reset quota control state
@@ -5933,6 +6064,11 @@ const buildOpenAIExtra = (base?: Record<string, unknown>): Record<string, unknow
     delete extra.openai_responses_flatten_namespaces
   }
   extra.openai_long_context_billing_enabled = openAILongContextBillingEnabled.value
+  if (form.type === 'apikey' && openAIResponseTierBillingEnabled.value) {
+    extra.openai_response_tier_billing_enabled = true
+  } else {
+    delete extra.openai_response_tier_billing_enabled
+  }
 
   if (accountCategory.value === 'oauth-based' && codexCLIOnlyEnabled.value) {
     extra.codex_cli_only = true
@@ -6006,6 +6142,16 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     extra.anthropic_strip_claude_code_identity = true
   } else {
     delete extra.anthropic_strip_claude_code_identity
+  }
+  if (anthropicMimicClaudeCodeEnabled.value) {
+    extra.anthropic_mimic_claude_code = true
+  } else {
+    delete extra.anthropic_mimic_claude_code
+  }
+  if (anthropicMimicClaudeCodeEnabled.value && anthropicMimicClaudeCodeDeductTokens.value) {
+    extra.anthropic_mimic_claude_code_deduct_tokens = true
+  } else {
+    delete extra.anthropic_mimic_claude_code_deduct_tokens
   }
   if (anthropicAPIKeyAuthScheme.value === 'authorization_bearer') {
     extra.anthropic_apikey_auth_scheme = 'authorization_bearer'
@@ -6342,6 +6488,10 @@ const handleSubmit = async () => {
     if (providerRoutesByModel(form.platform)) {
       applyOpenCodeGoProtocolRules(credentials, openCodeGoProtocolRules.value, 'create')
     }
+  }
+
+  if (form.platform === 'qwen') {
+    applyQwenCacheSettings(credentials, qwenSessionCache.value, qwenStrictAffinity.value)
   }
 
   // Add model mapping if configured（OpenAI 开启自动透传时不应用）
@@ -6815,9 +6965,11 @@ const handleGrokAuthorizePassword = async (emailPasswordInput: string) => {
 }
 
 // 账号已建好后再建规则；规则失败只提示，不影响账号本身。
-const createAutoBPSRules = async (accountIds: number[]) => {
+const createAutoBPSRules = async (accountIds: number[], signal?: AbortSignal) => {
+  signal?.throwIfAborted()
   if (!autoBPSAvailable.value || accountIds.length === 0) return
-  const { failed, error } = await autoBPS.createFor(accountIds)
+  const { failed, error } = await autoBPS.createFor(accountIds, signal)
+  signal?.throwIfAborted()
   if (failed.length > 0) {
     appStore.showWarning(t('admin.accounts.openai.autoBPSCreateFailed', { count: failed.length, error: error || t('common.error') }), 8000)
   }
@@ -6971,7 +7123,8 @@ const isAgentIdentityImportContent = (content: string) => {
 }
 
 // Reuse Session import normalization and identity deduplication after 2FA login.
-const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount): Promise<'created' | 'skipped'> => {
+const importTwoFACredential = async (credential: Record<string, unknown>, email: string, login: TokenGuardReloginAccount, signal?: AbortSignal): Promise<'created' | 'skipped'> => {
+  signal?.throwIfAborted()
   const credentialExtras = buildOpenAICodexImportCredentialExtras()
   if (credentialExtras === null) throw new Error('invalid_account_settings')
   const result = await importWithUpstream({
@@ -6991,10 +7144,11 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     extra: withAccountExtraSettings(buildOpenAICodexImportExtra()),
     update_existing: false,
     skip_existing: true
-  })
+  }, signal)
+  signal?.throwIfAborted()
   if (result.failed > 0) throw new Error('import_failed')
   if (result.created > 0) {
-    await createAutoBPSRules(createdImportAccountIds(result))
+    await createAutoBPSRules(createdImportAccountIds(result), signal)
   }
   const accountIds = [...new Set((result.items ?? [])
     .filter(item => item.action === 'created' || item.action === 'skipped')
@@ -7002,13 +7156,17 @@ const importTwoFACredential = async (credential: Record<string, unknown>, email:
     .filter((id): id is number => typeof id === 'number' && id > 0))]
   if (!accountIds.length) throw new Error('import_missing_account_id')
   for (const accountId of accountIds) {
-    await createTokenGuardV2Account({
+    signal?.throwIfAborted()
+    const enrollment = {
       account_id: accountId, login_email: login.email,
-      credential_mode: 'password_totp', proxy_source: 'account',
+      credential_mode: 'password_totp' as const, proxy_source: 'account' as const,
       password: login.password, totp_secret: login.mfa_secret,
       enabled: true, auto_relogin_enabled: true
-    })
+    }
+    if (signal) await createTokenGuardV2Account(enrollment, { signal })
+    else await createTokenGuardV2Account(enrollment)
   }
+  signal?.throwIfAborted()
   if (result.created > 0) {
     emit('created')
     return 'created'

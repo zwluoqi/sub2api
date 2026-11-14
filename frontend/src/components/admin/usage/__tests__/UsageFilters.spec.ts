@@ -93,10 +93,11 @@ const defaultFilters = () => ({
   end_date: '',
 })
 
-function mountFilters(filters = defaultFilters()) {
+function mountFilters(filters = defaultFilters(), mode: 'usage' | 'errors' | 'ranking' | 'connections' | 'latency' = 'usage') {
   return mount(UsageFilters, {
     props: {
       modelValue: filters,
+      mode,
       exporting: false,
       startDate: '2026-05-01',
       endDate: '2026-05-28',
@@ -111,6 +112,25 @@ function mountFilters(filters = defaultFilters()) {
     },
   })
 }
+
+describe('UsageFilters latency mode', () => {
+  it('shows only filters supported by the latency report', async () => {
+    const wrapper = mountFilters(defaultFilters(), 'latency')
+    await flushPromises()
+
+    const labels = wrapper.findAll('label').map(label => label.text())
+    expect(labels).toContain('User')
+    expect(labels).toContain('API Key')
+    expect(labels).toContain('Model')
+    expect(labels).toContain('Account')
+    expect(labels).toContain('Group')
+    expect(labels).not.toContain('Type')
+    expect(labels).not.toContain('Request Kind')
+    expect(labels).not.toContain('Billing Type')
+    expect(labels).not.toContain('Billing Mode')
+    wrapper.unmount()
+  })
+})
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -418,5 +438,32 @@ describe('UsageFilters — identity-only traffic filters', () => {
     await input.trigger('focus')
     expect(wrapper.text()).not.toContain('Cleared key')
     expect(wrapper.props('modelValue').api_key_id).toBeUndefined()
+  })
+})
+
+describe('admin usage platform filter', () => {
+  it.each(['errors', 'ranking', 'connections', 'latency'] as const)('keeps the platform selector out of %s', async mode => {
+    const wrapper = mountFilters(defaultFilters(), mode)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="usage-platform-filter"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('does not expose the admin platform filter in observer mode', async () => {
+    const wrapper = mount(UsageFilters, {
+      props: { modelValue: defaultFilters(), exporting: false, startDate: '', endDate: '' },
+      global: { provide: { [observerUsageContext as symbol]: true }, stubs: { Select: true } },
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="usage-platform-filter"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('offers a server-side platform filter alongside the group filter', async () => {
+    const wrapper = mountFilters()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="usage-platform-filter"]').exists(),
+      'admin usage details must offer a platform selector').toBe(true)
+    wrapper.unmount()
   })
 })

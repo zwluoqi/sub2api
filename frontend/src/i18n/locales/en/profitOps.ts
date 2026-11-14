@@ -30,8 +30,15 @@ export default {
   "desc": "Descending",
   "asc": "Ascending",
   "apply": "Apply filters",
+  "today": "Today",
+  "yesterday": "Yesterday",
+  "thisWeek": "This week",
+  "lastWeek": "Last week",
   "last24h": "Last 24 hours",
-  "loading": "Reading…",
+  "last48h": "Last 48 hours",
+  "thisMonth": "This month",
+  "lastMonth": "Last month",
+  "loading": "Aggregating; large ranges may take a few minutes. Please wait.",
   "queried": "Read at",
   "summary": "Filtered totals",
   "requests": "Request records",
@@ -57,7 +64,7 @@ export default {
   "duration": "Duration P90 (ms)",
   "samples": "Valid TTFT samples",
   "unknown": "Unknown",
-  "latencyNote": "Latency uses persisted forwarding TTFT for streamed rows with metered usage and a positive first-token time. It is not isolated upstream semantic latency. Duration uses duration_ms. No complete failed-request denominator exists, so request error rates are unavailable.",
+  "latencyNote": "Latency retains persisted legacy first_token_ms and duration_ms for records with token/cost evidence and valid positive timings. Legacy timer scope varies by protocol; passthrough and bridge can already include admission. These are server observations, not client E2E. Separately sourced queue-inclusive metrics exclude historical unmeasured rows. Usage logs lack a complete failed-request denominator.",
   "previous": "Previous",
   "next": "Next",
   "accountBasis": "Per-account estimate sources",
@@ -75,5 +82,6 @@ export default {
   "errorNote": "Diagnostic log counts for the current account cohort, excluding count_tokens, do not represent a complete request failure rate. 5xx does not prove degraded intelligence. Only the first 20 error categories are listed.",
   "errorRecords": "Log records",
   "queryFailed": "Query failed; retry. Failure has not been displayed as zero.",
-  "invalidRange": "Choose a valid half-open range of at most 31 days."
+  "queryTimeout": "This aggregation took too long to complete. Please retry later; failure has not been displayed as zero.",
+  "invalidRange": "Choose a valid half-open range of at most 32 days."
 }

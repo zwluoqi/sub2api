@@ -113,7 +113,9 @@ const profitOperationsCohort = `accounts_config AS (
 // Join the complete projection before applying the selected cohort. Joining only
 // cohort would turn every configured account outside it into account_missing.
 const profitOperationsBase = `WITH ` + profitOperationsCohort + `, scoped AS (
- SELECT u.*,COALESCE(c.key,'unknown:account_missing') AS upstream_key,
+ SELECT u.account_id,u.requested_model,u.model,u.upstream_model,u.total_cost,u.actual_cost,u.stream,u.first_token_ms,
+ u.account_stats_cost,u.input_tokens,u.output_tokens,u.cache_read_tokens,u.cache_creation_tokens,u.duration_ms,u.billing_type,u.created_at,u.queue_timing,u.queue_wait_ms,
+ COALESCE(c.key,'unknown:account_missing') AS upstream_key,
  COALESCE(c.attribution,'account_missing') AS attribution,c.name AS account_name,c.updated_at AS config_updated_at,c.deleted,c.multiplier,c.channel_id AS explicit_channel_id,c.channel_name,c.channel_code,c.channel_remark,c.channel_revision,c.assignment,COALESCE(c.cost_basis,'account_missing') AS cost_basis,
  COALESCE(NULLIF(u.requested_model,''),u.model) AS public_model,
  u.total_cost AS cost_base
@@ -129,7 +131,8 @@ const profitOperationsBase = `WITH ` + profitOperationsCohort + `, scoped AS (
  CASE WHEN duration_ms>0 AND (actual_cost>0 OR total_cost>0 OR account_stats_cost>0 OR input_tokens>0 OR output_tokens>0 OR cache_read_tokens>0 OR cache_creation_tokens>0) THEN duration_ms END AS measured_duration
  FROM scoped
 )`
-const profitOperationsAggregate = `count(*) AS requests,
+
+var profitOperationsAggregate = `count(*) AS requests,
  CASE WHEN count(*)=0 THEN 0 WHEN count(standard)=count(*) THEN sum(standard) END AS standard_charge,
  CASE WHEN count(*)=0 THEN 0 WHEN count(income)=count(*) THEN sum(income) END AS request_income,
  count(*) FILTER(WHERE standard IS NULL) AS unknown_standard_requests,
@@ -156,7 +159,7 @@ const profitOperationsAggregate = `count(*) AS requests,
  percentile_cont(.95) WITHIN GROUP(ORDER BY ttft) AS p95_ms,
  percentile_cont(.9) WITHIN GROUP(ORDER BY measured_duration) AS duration_p90_ms,
  max(created_at) AS latest_sample_at,min(config_updated_at) AS oldest_config_updated_at,max(config_updated_at) AS latest_config_updated_at,
- jsonb_agg(DISTINCT cost_basis) AS cost_bases`
+ jsonb_agg(DISTINCT cost_basis) AS cost_bases` + queueInclusiveOperationsAggregate("measured_duration")
 
 func (r *channelRepository) ReadProfitOperations(ctx context.Context, f service.UpstreamOperationsFilter) (*service.ProfitOperationsSnapshot, error) {
 	if err := service.NormalizeProfitOperationsFilter(&f); err != nil {

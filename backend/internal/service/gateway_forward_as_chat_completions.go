@@ -162,7 +162,12 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			return nil, fmt.Errorf("upstream safety rejection: %s", upstreamMsg)
 		}
 
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		// Apply account policies even for statuses outside the default failover list.
+		shouldDisable := false
+		if s.rateLimitService != nil {
+			shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
+		}
+		if shouldDisable || s.shouldFailoverUpstreamError(resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
 				ProxyName:          opsUpstreamProxyName(account),
@@ -174,10 +179,6 @@ func (s *GatewayService) ForwardAsChatCompletions(
 				Kind:               "failover",
 				Message:            upstreamMsg,
 			})
-			shouldDisable := false
-			if s.rateLimitService != nil {
-				shouldDisable = s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, mappedModel)
-			}
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
@@ -204,9 +205,15 @@ func (s *GatewayService) ForwardAsChatCompletions(
 			s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
 		}
 	} else {
+		writerSizeBeforeBody := c.Writer.Size()
 		result, handleErr = s.handleCCBufferedFromAnthropic(resp, c, originalModel, mappedModel, reasoningEffort, startTime)
+		var sseErr *sseStreamErrorEventError
+		if errors.As(handleErr, &sseErr) {
+			return nil, s.sseStreamErrorEventFailover(ctx, c, account, resp, sseErr.RawData, mappedModel, c.Writer.Size() != writerSizeBeforeBody)
+		}
 	}
 
+	attachClaudeCodeMimicInjection(c, account, result)
 	return result, handleErr
 }
 
@@ -276,11 +283,20 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 			continue
 		}
 
-		if event.Type == "error" && isAnthropicCompatSafetyRejection([]byte(payload)) {
-			message := sanitizeUpstreamErrorMessage(gjson.Get(payload, "error.message").String())
-			writeGatewayCCError(c, http.StatusForbidden, "permission_error", message)
-			MarkResponseCommitted(c)
-			return nil, fmt.Errorf("upstream safety rejection: %s", message)
+		if event.Type == "error" {
+			if isAnthropicCompatSafetyRejection([]byte(payload)) {
+				message := sanitizeUpstreamErrorMessage(gjson.Get(payload, "error.message").String())
+				writeGatewayCCError(c, http.StatusForbidden, "permission_error", message)
+				MarkResponseCommitted(c)
+				return nil, fmt.Errorf("upstream safety rejection: %s", message)
+			}
+			// 缓冲模式尚未向客户端写出任何内容：交给调用方按流内 error 事件做
+			// 账号故障转移，而不是忽略后返回 502 或截断的半截响应。
+			logger.L().Warn("forward_as_cc buffered: upstream error event",
+				zap.String("request_id", requestID),
+				zap.String("error_type", gjson.Get(payload, "error.type").String()),
+			)
+			return nil, &sseStreamErrorEventError{RawData: payload}
 		}
 
 		// message_start carries the initial response structure and cache usage
@@ -376,6 +392,26 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 	return result, nil
 }
 
+// ccUpstreamPingHoldBeforeOutput 是 Chat Completions 兼容流在写出首段内容前
+// 暂不转发上游 ping 的最长时长。窗口内流体 error 事件仍可故障转移；窗口过后
+// 恢复转发心跳，远低于常见代理 60–100 秒的空闲超时。
+const ccUpstreamPingHoldBeforeOutput = 30 * time.Second
+
+// ccPingHoldContextKey 仅供测试在单个请求的 gin.Context 上覆盖保留时长
+// （值为 time.Duration）；生产代码不设置该键。
+const ccPingHoldContextKey = "sub2api.cc_upstream_ping_hold"
+
+func ccUpstreamPingHold(c *gin.Context) time.Duration {
+	if c != nil {
+		if v, ok := c.Get(ccPingHoldContextKey); ok {
+			if hold, ok := v.(time.Duration); ok {
+				return hold
+			}
+		}
+	}
+	return ccUpstreamPingHoldBeforeOutput
+}
+
 // handleCCStreamingFromAnthropic reads Anthropic SSE events, converts each
 // to Responses events, then to Chat Completions chunks, and writes them.
 func (s *GatewayService) handleCCStreamingFromAnthropic(
@@ -407,6 +443,8 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 	var firstTokenMs *int
 	firstChunk := true
 	writerSizeBeforeStream := c.Writer.Size()
+	streamStartedAt := time.Now()
+	pingHold := ccUpstreamPingHold(c)
 
 	stream := newAnthropicCompatStream(s.cfg, c, resp, "forward_as_cc", requestID)
 	defer stream.stop()
@@ -448,6 +486,12 @@ func (s *GatewayService) handleCCStreamingFromAnthropic(
 		}
 		if event.Type == "ping" {
 			if stream.clientDisconnected {
+				return
+			}
+			// 首段输出前暂不转发上游 ping：一旦写出字节，流内 error 事件就不能再
+			// 故障转移到其他账号，客户端只会收到 HTTP 200 + 心跳 + 错误帧。
+			// 超过保留时长仍无输出时恢复转发，避免上游长时间只发 ping 触发空闲超时。
+			if c.Writer.Size() == writerSizeBeforeStream && time.Since(streamStartedAt) < pingHold {
 				return
 			}
 			if _, err := fmt.Fprint(c.Writer, ": ping\n\n"); err != nil {

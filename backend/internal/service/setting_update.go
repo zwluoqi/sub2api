@@ -108,6 +108,9 @@ func (s *SettingService) refreshCachedSettingsAfterWrite(ctx context.Context, se
 }
 
 func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, settings *SystemSettings) (map[string]string, error) {
+	if err := settings.normalizeBalanceForecastSettings(); err != nil {
+		return nil, err
+	}
 	captureConfig := settings.requestCaptureConfig()
 	if err := captureConfig.Validate(); err != nil {
 		return nil, infraerrors.BadRequest("INVALID_REQUEST_CAPTURE_SETTINGS", err.Error())
@@ -505,6 +508,8 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyGrokCrossClientModelMapEnabled] = strconv.FormatBool(settings.GrokCrossClientModelMapEnabled)
 	updates[SettingKeyGrokDefaultBaseURLMode] = normalizeGrokDefaultBaseURLMode(settings.GrokDefaultBaseURLMode)
 	updates[SettingKeyGrokVideoSourceURLEnabled] = strconv.FormatBool(settings.GrokVideoSourceURLEnabled)
+	updates[SettingKeyOpenAI409OmitEncryptedHistoryEnabled] = strconv.FormatBool(settings.OpenAI409OmitEncryptedHistoryEnabled)
+	updates[SettingKeyOpenAI400OmitEncryptedHistoryEnabled] = strconv.FormatBool(settings.OpenAI400OmitEncryptedHistoryEnabled)
 
 	// Available channels feature switch
 	updates[SettingKeyAvailableChannelsEnabled] = strconv.FormatBool(settings.AvailableChannelsEnabled)
@@ -670,6 +675,9 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyOpenAIAdvancedSchedulerWeightSessionSticky] = settings.OpenAIAdvancedSchedulerWeightSessionSticky
 
 	// 余额、订阅到期与账号限额通知
+	updates[SettingKeyBalanceForecastEnabled] = strconv.FormatBool(settings.BalanceForecastEnabled)
+	updates[SettingKeyBalanceForecastThresholdHours] = strconv.FormatFloat(settings.BalanceForecastThresholdHours, 'f', -1, 64)
+	updates[SettingKeyBalanceForecastMaxNotifications] = strconv.Itoa(settings.BalanceForecastMaxNotifications)
 	updates[SettingKeyBalanceLowNotifyEnabled] = strconv.FormatBool(settings.BalanceLowNotifyEnabled)
 	updates[SettingKeyBalanceLowNotifyThreshold] = strconv.FormatFloat(settings.BalanceLowNotifyThreshold, 'f', 8, 64)
 	updates[SettingKeyBalanceLowNotifyRechargeURL] = settings.BalanceLowNotifyRechargeURL
@@ -705,6 +713,11 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	updates[SettingKeyUsageShowCacheRate] = strconv.FormatBool(settings.UsageShowCacheRate)
 	updates[SettingKeyUsageShowCacheRateToUsers] = strconv.FormatBool(settings.UsageShowCacheRateToUsers)
 	updates[SettingKeyUsageShowUpstreamResponseModelToUsers] = strconv.FormatBool(settings.UsageShowUpstreamResponseModelToUsers)
+	hiddenMenuItems, err := json.Marshal(normalizeSmartOpsHiddenMenuItems(settings.SmartOpsHiddenMenuItems))
+	if err != nil {
+		return nil, fmt.Errorf("marshal smart ops hidden menu items: %w", err)
+	}
+	updates[SettingKeySmartOpsHiddenMenuItems] = string(hiddenMenuItems)
 	updates[SettingKeyRequestCaptureEnabled] = strconv.FormatBool(captureConfig.Enabled)
 	updates[SettingKeyRequestCaptureQuotaMiB] = strconv.FormatInt(captureConfig.QuotaMiB, 10)
 	updates[SettingKeyRequestCaptureRetentionDays] = strconv.Itoa(captureConfig.RetentionDays)

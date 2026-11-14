@@ -543,6 +543,14 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_LoadBat
 	require.EqualError(t, err, "no available OpenAI accounts supporting model: gpt-5.4-mini (pool=3, filtered: excluded=1 model_not_supported=1 quota_auto_pause_7d=1)")
 }
 
+func TestBuildOpenAIAccountLoadRequestUsesRealConcurrency(t *testing.T) {
+	factor := 10000
+	account := &Account{ID: 903, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 2, LoadFactor: &factor}
+	loads := buildOpenAIAccountLoadRequest([]*Account{account})
+
+	require.Equal(t, []AccountWithConcurrency{{ID: 903, MaxConcurrency: 2}}, loads)
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_DefaultDisabled_RequiredWSV2_SkipsHTTPOnlyAccount(t *testing.T) {
 	resetOpenAIAdvancedSchedulerSettingCacheForTest()
 
@@ -2561,7 +2569,19 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByTT
 	require.Equal(t, int64(21102), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21101), cache.sessionBindings["openai:session_hash_sticky_ttft"])
+	require.Equal(t, int64(21102), cache.sessionBindings["openai:session_hash_sticky_ttft"])
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	recoveredTTFT := 500
+	for range 20 {
+		svc.openaiAccountStats.report(21101, true, &recoveredTTFT)
+	}
+	selection, decision, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_sticky_ttft", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(21102), selection.Account.ID, "recovery must not move the session back to its original account")
+	require.True(t, decision.StickySessionHit)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}
@@ -2611,7 +2631,18 @@ func TestOpenAIGatewayService_SelectAccountWithScheduler_SessionStickyEscapeByEr
 	require.Equal(t, int64(21202), selection.Account.ID)
 	require.Equal(t, openAIAccountScheduleLayerLoadBalance, decision.Layer)
 	require.False(t, decision.StickySessionHit)
-	require.Equal(t, int64(21201), cache.sessionBindings["openai:session_hash_sticky_error_rate"])
+	require.Equal(t, int64(21202), cache.sessionBindings["openai:session_hash_sticky_error_rate"])
+	if selection.ReleaseFunc != nil {
+		selection.ReleaseFunc()
+	}
+	for range 20 {
+		svc.openaiAccountStats.report(21201, true, nil)
+	}
+	selection, decision, err = svc.SelectAccountWithScheduler(ctx, &groupID, "", "session_hash_sticky_error_rate", "gpt-5.1", nil, OpenAIUpstreamTransportAny, false)
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, int64(21202), selection.Account.ID, "recovery must not move the session back to its original account")
+	require.True(t, decision.StickySessionHit)
 	if selection.ReleaseFunc != nil {
 		selection.ReleaseFunc()
 	}

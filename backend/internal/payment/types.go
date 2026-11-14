@@ -21,6 +21,7 @@ const (
 	TypeLink         PaymentType = "link"
 	TypeEasyPay      PaymentType = "easypay"
 	TypeAirwallex    PaymentType = "airwallex"
+	TypeBEpusdt      PaymentType = "bepusdt"
 )
 
 // Order status constants shared across payment and service layers.
@@ -102,19 +103,21 @@ func GetBasePaymentType(t string) string {
 
 // CreatePaymentRequest holds the parameters for creating a new payment.
 type CreatePaymentRequest struct {
-	OrderID     string // Internal order ID
-	Amount      string // 支付金额，按服务商实例配置的币种解释
-	PaymentType string // e.g. "alipay", "wxpay", "stripe"
-	Subject     string // Product description
-	NotifyURL   string // Webhook callback URL
-	ReturnURL   string // Browser redirect URL after payment
-	OpenID      string // WeChat JSAPI payer OpenID when available
-	ClientIP    string // Payer's IP address
-	IsMobile    bool   // Whether the request comes from a mobile device
+	PaymentSubtype string // Selected Stripe sub-method, fixed before the intent amount is calculated.
+	OrderID        string // Internal order ID
+	Amount         string // 支付金额，按服务商实例配置的币种解释
+	PaymentType    string // e.g. "alipay", "wxpay", "stripe"
+	Subject        string // Product description
+	NotifyURL      string // Webhook callback URL
+	ReturnURL      string // Browser redirect URL after payment
+	OpenID         string // WeChat JSAPI payer OpenID when available
+	ClientIP       string // Payer's IP address
+	IsMobile       bool   // Whether the request comes from a mobile device
 	// AlipayMobilePrecreate routes a mobile Alipay request through
 	// alipay.trade.precreate instead of alipay.trade.wap.pay.
 	AlipayMobilePrecreate bool
-	InstanceSubMethods    string // Comma-separated sub-methods from instance supported_types (for Stripe)
+	InstanceSubMethods    string    // Comma-separated sub-methods from instance supported_types (for Stripe)
+	ExpiresAt             time.Time // Local order deadline, used by BEpusdt's timeout parameter
 }
 
 // CreatePaymentResultType describes the shape of the create-payment result.
@@ -207,6 +210,7 @@ type RefundResponse struct {
 
 // InstanceSelection holds the selected provider instance and its decrypted config.
 type InstanceSelection struct {
+	Quote          *InstanceQuote
 	InstanceID     string
 	ProviderKey    string // Provider key of the selected instance (e.g. "alipay", "easypay")
 	Config         map[string]string

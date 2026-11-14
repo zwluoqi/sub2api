@@ -32,7 +32,7 @@
       <!-- Toggles + Payment mode + Supported types (single row) -->
       <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
         <ToggleSwitch :label="t('common.enabled')" :checked="form.enabled" @toggle="form.enabled = !form.enabled" />
-        <ToggleSwitch :label="t('admin.settings.payment.refundEnabled')" :checked="form.refund_enabled" @toggle="form.refund_enabled = !form.refund_enabled; if (!form.refund_enabled) form.allow_user_refund = false" />
+        <ToggleSwitch v-if="form.provider_key !== 'bepusdt'" :label="t('admin.settings.payment.refundEnabled')" :checked="form.refund_enabled" @toggle="form.refund_enabled = !form.refund_enabled; if (!form.refund_enabled) form.allow_user_refund = false" />
         <ToggleSwitch v-if="form.refund_enabled" :label="t('admin.settings.payment.allowUserRefund')" :checked="form.allow_user_refund" @toggle="form.allow_user_refund = !form.allow_user_refund" />
         <div v-if="supportsPaymentMode" class="flex items-center gap-2">
           <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.paymentMode') }}</span>
@@ -68,6 +68,24 @@
             >{{ pt.label }}</button>
           </div>
         </div>
+      </div>
+
+      <div v-if="form.provider_key === 'bepusdt'" class="space-y-2">
+        <div class="flex items-center gap-2">
+          <label class="input-label mb-0">{{ t('admin.settings.payment.field_mode') }}</label>
+          <NewFeatureBadge
+            v-if="userId != null"
+            :notice-id="NEW_FEATURE_NOTICES.bepusdtPayment"
+            :user-id="userId"
+          />
+        </div>
+        <select v-model="config.mode" class="input" data-testid="bepusdt-mode">
+          <option value="embedded">{{ t('admin.settings.payment.bepusdtEmbedded') }}</option>
+          <option value="external">{{ t('admin.settings.payment.bepusdtExternal') }}</option>
+        </select>
+        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+          {{ t(config.mode === 'embedded' ? 'admin.settings.payment.bepusdtEmbeddedHint' : 'admin.settings.payment.bepusdtHint') }}
+        </p>
       </div>
 
       <div v-if="form.provider_key === 'easypay'" class="space-y-3 rounded-lg border border-gray-100 p-3 dark:border-dark-700">
@@ -156,6 +174,7 @@
           <div v-for="field in resolvedFields" :key="field.key">
             <label class="input-label">
               {{ field.label }}
+              <NewFeatureBadge v-if="field.key === 'refundSuccessCode' && userId != null" :notice-id="NEW_FEATURE_NOTICES.easyPayRefundSuccessCode" :user-id="userId" />
               <span v-if="field.optional" class="text-xs text-gray-400">({{ t('common.optional') }})</span>
               <span v-else class="text-red-500"> *</span>
             </label>
@@ -291,6 +310,35 @@
           <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('admin.settings.payment.limitsHint') }}</p>
         </div>
       </div>
+      <section class="space-y-3 border-t border-gray-200 pt-4 dark:border-dark-700" data-testid="provider-fee-settings">
+        <div class="flex items-center gap-2">
+          <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.settings.payment.providerFeeTitle') }}</h4>
+          <NewFeatureBadge v-if="userId != null" :notice-id="NEW_FEATURE_NOTICES.paymentProviderFees" :user-id="userId" />
+        </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.settings.payment.providerFeeHint') }}</p>
+        <div class="space-y-2">
+          <label class="input-label" for="provider-default-fee-mode">{{ t('admin.settings.payment.providerDefaultFee') }}</label>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <select id="provider-default-fee-mode" v-model="feeMode" class="input" data-testid="provider-fee-mode">
+              <option value="inherit">{{ t('admin.settings.payment.feeInheritGlobal') }}</option>
+              <option value="custom">{{ t('admin.settings.payment.feeCustom') }}</option>
+            </select>
+            <input v-if="feeMode === 'custom'" v-model="feeRateInput" type="number" min="0" max="100" step="0.01" required class="input" data-testid="provider-fee-rate" :aria-label="t('admin.settings.payment.providerDefaultFee')" />
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400" data-testid="provider-effective-fee">{{ effectiveFeeLabel }}</p>
+        </div>
+        <div v-for="method in feeTypes" :key="method.value" class="space-y-2 rounded-lg border border-gray-100 p-3 dark:border-dark-700">
+          <label :for="`provider-method-fee-${method.value}`" class="input-label">{{ method.label }}</label>
+          <div class="grid gap-2 sm:grid-cols-2">
+            <select :id="`provider-method-fee-${method.value}`" :value="methodFeeInputs[method.value] == null ? 'inherit' : 'custom'" class="input" :data-testid="`method-fee-mode-${method.value}`" @change="setMethodFeeMode(method.value, ($event.target as HTMLSelectElement).value)">
+              <option value="inherit">{{ t('admin.settings.payment.feeInheritProvider') }}</option>
+              <option value="custom">{{ t('admin.settings.payment.feeCustom') }}</option>
+            </select>
+            <input v-if="methodFeeInputs[method.value] != null" v-model="methodFeeInputs[method.value]" type="number" min="0" max="100" step="0.01" required class="input" :data-testid="`method-fee-rate-${method.value}`" :aria-label="t('admin.settings.payment.methodFeeLabel', { method: method.label })" />
+          </div>
+        </div>
+        <p v-if="feeValidationError" class="text-sm text-red-600 dark:text-red-400" role="alert">{{ feeValidationError }}</p>
+      </section>
     </form>
 
     <template #footer>
@@ -308,6 +356,8 @@
 import { reactive, computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '@/components/common/BaseDialog.vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import Select from '@/components/common/Select.vue'
 import type { SelectOption } from '@/components/common/Select.vue'
@@ -324,6 +374,8 @@ import {
   PAYMENT_MODE_REDIRECT,
   STRIPE_SDK_API_VERSION,
   getAvailableTypes,
+  getDefaultSupportedTypes,
+  getProviderConfigFields,
   extractBaseUrl,
   parseEasyPayCustomMethods,
   serializeEasyPayCustomMethods,
@@ -362,6 +414,8 @@ const props = defineProps<{
   enabledKeyOptions: TypeOption[]
   allPaymentTypes: TypeOption[]
   redirectLabel: string
+  userId?: number | null
+  globalFeeRate?: number
 }>()
 
 const emit = defineEmits<{
@@ -374,6 +428,8 @@ const emit = defineEmits<{
     payment_mode: string
     refund_enabled: boolean
     allow_user_refund: boolean
+    fee_rate: number | null
+    method_fee_rates: Record<string, number>
     config: Record<string, string>
     limits: string
   }]
@@ -411,6 +467,43 @@ const returnBaseUrl = ref('')
 const limitsExpanded = ref(false)
 const visibleFields = reactive<Record<string, boolean>>({})
 const easyPayCustomMethods = reactive<EasyPayCustomMethod[]>([])
+const feeMode = ref<'inherit' | 'custom'>('inherit')
+const feeRateInput = ref<string | number>('0')
+const methodFeeInputs = reactive<Record<string, string | number>>(Object.create(null))
+const feeValidationError = ref('')
+
+const feeTypes = computed(() => {
+  // Stripe sub-methods have separate fees even though their limits are shared.
+  let configuredTypes = form.provider_key === 'airwallex' ? ['airwallex'] : form.supported_types
+  if (configuredTypes.length === 0 && ['alipay', 'wxpay'].includes(form.provider_key)) configuredTypes = [form.provider_key]
+  const types = new Set(configuredTypes.map(type => type === 'alipay_direct' ? 'alipay' : type === 'wxpay_direct' ? 'wxpay' : type))
+  if (form.provider_key === 'easypay') {
+    const customTypes = normalizedEasyPayCustomMethods().filter(method => method.type && method.upstreamType)
+    for (const method of customTypes) types.add(method.type)
+    for (const type of types) {
+      if (!(PROVIDER_SUPPORTED_TYPES.easypay || []).includes(type) && !customTypes.some(method => method.type === type)) types.delete(type)
+    }
+  }
+  types.delete('easypay')
+  return [...types].map(value => availableTypes.value.find(method => method.value === value) || { value, label: value })
+})
+
+function parseFeeRate(value: string | number): number | null {
+  if (!/^\d+(?:\.\d{0,2})?$/.test(String(value).trim())) return null
+  const rate = Number(value)
+  return Number.isFinite(rate) && rate >= 0 && rate <= 100 ? rate : null
+}
+
+const effectiveDefaultFee = computed(() => feeMode.value === 'inherit' ? props.globalFeeRate : parseFeeRate(feeRateInput.value))
+const effectiveFeeLabel = computed(() => effectiveDefaultFee.value == null
+  ? t('admin.settings.payment.feeEffectiveUnknown')
+  : t('admin.settings.payment.feeEffectiveDefault', { rate: effectiveDefaultFee.value }))
+
+function setMethodFeeMode(type: string, mode: string) {
+  feeValidationError.value = ''
+  if (mode === 'inherit') delete methodFeeInputs[type]
+  else methodFeeInputs[type] = String(effectiveDefaultFee.value ?? 0)
+}
 
 // --- Computed ---
 const defaultBaseUrl = typeof window !== 'undefined' ? window.location.origin : ''
@@ -469,7 +562,7 @@ const availableTypes = computed(() => {
 })
 
 const resolvedFields = computed(() => {
-  const fields = PROVIDER_CONFIG_FIELDS[form.provider_key] || []
+  const fields = getProviderConfigFields(form.provider_key, config).filter(field => field.key !== 'mode')
   return fields.map(f => ({
     ...f,
     label: f.label || t(`admin.settings.payment.field_${f.key}`),
@@ -548,7 +641,7 @@ const limitableTypes = computed(() => {
   }
   const selected = form.supported_types.filter(t => t !== 'easypay')
   return selected.map(v => {
-    const found = props.allPaymentTypes.find(pt => pt.value === v)
+    const found = props.allPaymentTypes.find(pt => pt.value === v) || availableTypes.value.find(pt => pt.value === v)
     return found || { value: v, label: v }
   })
 })
@@ -589,7 +682,11 @@ function removeEasyPayCustomMethod(index: number) {
 }
 
 function onKeyChange() {
-  form.supported_types = [...(PROVIDER_SUPPORTED_TYPES[form.provider_key] || [])]
+  if (form.provider_key === 'bepusdt') {
+    form.refund_enabled = false
+    form.allow_user_refund = false
+  }
+  form.supported_types = getDefaultSupportedTypes(form.provider_key)
   form.payment_mode = defaultPaymentMode(form.provider_key)
   clearConfig()
   applyDefaults()
@@ -603,6 +700,10 @@ function clearConfig() {
   returnBaseUrl.value = ''
   limitsExpanded.value = false
   easyPayCustomMethods.splice(0, easyPayCustomMethods.length)
+  feeMode.value = 'inherit'
+  feeRateInput.value = '0'
+  Object.keys(methodFeeInputs).forEach(key => delete methodFeeInputs[key])
+  feeValidationError.value = ''
 }
 
 function applyDefaults() {
@@ -655,6 +756,7 @@ function serializeLimits(): string {
 }
 
 function handleSave() {
+  feeValidationError.value = ''
   // Validate required fields
   if (!form.name.trim()) {
     emitValidationError(t('admin.settings.payment.validationNameRequired'))
@@ -668,10 +770,36 @@ function handleSave() {
     }
     syncEasyPayCustomMethods()
   }
+  const feeRate = feeMode.value === 'inherit' ? null : parseFeeRate(feeRateInput.value)
+  // Disabled methods retain their saved overrides so re-enabling restores them.
+  const methodFeeRates: Record<string, number> = { ...props.editing?.method_fee_rates }
+  if (form.provider_key === 'easypay') {
+    const currentCustomTypes = new Set(normalizedEasyPayCustomMethods().map(method => method.type))
+    for (const previous of parseEasyPayCustomMethods(props.editing?.config?.customMethods || '')) {
+      if (!currentCustomTypes.has(previous.type)) delete methodFeeRates[previous.type]
+    }
+  }
+  if (feeMode.value === 'custom' && feeRate == null) {
+    feeValidationError.value = t('admin.settings.payment.feeValidation')
+    return
+  }
+  for (const method of feeTypes.value) {
+    const input = methodFeeInputs[method.value]
+    if (input == null) {
+      delete methodFeeRates[method.value]
+      continue
+    }
+    const rate = parseFeeRate(input)
+    if (rate == null) {
+      feeValidationError.value = t('admin.settings.payment.feeValidation')
+      return
+    }
+    methodFeeRates[method.value] = rate
+  }
   // Validate required config fields — all non-optional fields must be filled.
   // In edit mode, sensitive fields may be left blank to preserve the stored
   // value (backend merges blanks by preserving the existing secret).
-  for (const f of PROVIDER_CONFIG_FIELDS[form.provider_key] || []) {
+  for (const f of getProviderConfigFields(form.provider_key, config)) {
     if (f.optional) continue
     if (props.editing && f.sensitive) continue
     const val = (config[f.key] || '').trim()
@@ -689,6 +817,7 @@ function handleSave() {
   )
   const filteredConfig: Record<string, string> = {}
   for (const [k, v] of Object.entries(config)) {
+    if (form.provider_key === 'bepusdt' && config.mode === 'embedded' && ['apiBase', 'apiToken'].includes(k)) continue
     if (!v || !v.trim()) {
       if (clearableConfigKeys.has(k)) {
         filteredConfig[k] = ''
@@ -721,6 +850,8 @@ function handleSave() {
     payment_mode: supportsPaymentMode.value ? form.payment_mode : '',
     refund_enabled: form.refund_enabled,
     allow_user_refund: form.refund_enabled ? form.allow_user_refund : false,
+    fee_rate: feeRate,
+    method_fee_rates: methodFeeRates,
     config: filteredConfig,
     limits: serializeLimits(),
   })
@@ -786,7 +917,7 @@ function emitValidationError(msg: string) {
 function reset(defaultKey: string) {
   form.name = ''
   form.provider_key = defaultKey
-  form.supported_types = [...(PROVIDER_SUPPORTED_TYPES[defaultKey] || [])]
+  form.supported_types = getDefaultSupportedTypes(defaultKey)
   form.enabled = true
   form.payment_mode = defaultPaymentMode(defaultKey)
   form.refund_enabled = false
@@ -811,6 +942,11 @@ function loadProvider(provider: ProviderInstance) {
   form.refund_enabled = provider.refund_enabled
   form.allow_user_refund = provider.allow_user_refund
   clearConfig()
+  feeMode.value = provider.fee_rate == null ? 'inherit' : 'custom'
+  feeRateInput.value = String(provider.fee_rate ?? 0)
+  for (const [type, rate] of Object.entries(provider.method_fee_rates || {})) {
+    methodFeeInputs[type] = String(rate)
+  }
   // Pre-fill config from API response. Backend omits sensitive fields entirely,
   // so those inputs stay blank — submitting blank preserves the stored secret.
   if (provider.config) {
@@ -832,6 +968,7 @@ function loadProvider(provider: ProviderInstance) {
       returnBaseUrl.value = extractBaseUrl(provider.config['returnUrl'], paths.returnUrl)
     }
   }
+  if (provider.provider_key === 'bepusdt' && !config.mode) config.mode = 'external'
   applyDefaults()
   // Parse existing limits
   if (provider.limits) {

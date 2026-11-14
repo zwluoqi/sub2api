@@ -30,10 +30,10 @@
               {{ methodLabel(method) }}
             </span>
             <span
-              v-if="method.fee_rate > 0"
+              v-if="(method.fee_rate_max ?? method.fee_rate) > 0"
               class="text-[10px] tracking-wide text-gray-500 dark:text-dark-400"
             >
-              {{ t('payment.fee') }} {{ method.fee_rate }}%
+              {{ t('payment.fee') }} {{ methodFeeLabel(method) }}%
             </span>
           </span>
         </span>
@@ -51,11 +51,14 @@ import wxpayIcon from '@/assets/icons/wxpay.svg'
 import stripeIcon from '@/assets/icons/stripe.svg'
 import airwallexIcon from '@/assets/icons/airwallex.svg'
 import paymentIcon from '@/assets/icons/payment.svg'
+import usdtIcon from '@/assets/icons/usdt.svg'
 
 export interface PaymentMethodOption {
   type: string
   display_name?: string
   fee_rate: number
+  fee_rate_min?: number
+  fee_rate_max?: number
   available: boolean
 }
 
@@ -88,6 +91,7 @@ const sortedMethods = computed(() => {
 })
 
 function methodIcon(type: string): string {
+  if (type.startsWith('usdt.')) return usdtIcon
   if (isBuiltInAlipayMethod(type)) return METHOD_ICONS.alipay
   if (isBuiltInWxpayMethod(type)) return METHOD_ICONS.wxpay
   if (type === 'airwallex') return METHOD_ICONS.airwallex
@@ -98,7 +102,14 @@ function methodLabel(method: PaymentMethodOption): string {
   return method.display_name || t(`payment.methods.${method.type}`, method.type)
 }
 
+function methodFeeLabel(method: PaymentMethodOption): string {
+  const min = method.fee_rate_min ?? method.fee_rate
+  const max = method.fee_rate_max ?? min
+  return min === max ? String(min) : `${min}–${max}`
+}
+
 function methodSelectedClass(type: string): string {
+  if (type.startsWith('usdt.') || type.startsWith('usdc.')) return 'border-[#26A17B] bg-green-50 text-gray-900 shadow-sm dark:bg-green-950 dark:text-gray-100'
   if (isBuiltInAlipayMethod(type)) return 'border-[#02A9F1] bg-blue-50 text-gray-900 shadow-sm dark:bg-blue-950 dark:text-gray-100'
   if (isBuiltInWxpayMethod(type)) return 'border-[#09BB07] bg-green-50 text-gray-900 shadow-sm dark:bg-green-950 dark:text-gray-100'
   if (type === 'stripe') return 'border-[#676BE5] bg-indigo-50 text-gray-900 shadow-sm dark:bg-indigo-950 dark:text-gray-100'

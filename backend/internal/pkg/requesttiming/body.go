@@ -18,10 +18,10 @@ func (c *Collector) WrapBody(body io.ReadCloser) io.ReadCloser {
 	return &inboundBody{ReadCloser: body, c: c}
 }
 func (b *inboundBody) Read(p []byte) (int, error) {
-	start := time.Now()
+	start := b.c.now()
 	n, err := b.ReadCloser.Read(p)
-	end := time.Now()
 	c := b.c
+	end := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.finished {
@@ -50,7 +50,7 @@ func (c *Collector) Written(start time.Time, n int, err error, flush bool) {
 	if c.finished {
 		return
 	}
-	end := time.Now()
+	end := c.now()
 	c.data.DownstreamWriteMS += float64(end.Sub(start)) / float64(time.Millisecond)
 	c.data.DownstreamBytes += int64(n)
 	if n > 0 {
@@ -77,13 +77,44 @@ func OutputFlushed(ctx context.Context) {
 		return
 	}
 	if tr, ok := ctx.Value(attemptKey{}).(*Trace); ok && tr.c == c {
+		if tr.logicalResponse && c.data.Attempts[tr.index].EndMS != nil {
+			return
+		}
 		if _, seen := c.data.Attempts[tr.index].Events["first_semantic"]; !seen {
 			return
 		}
 	} else if _, seen := c.data.Events["first_semantic"]; !seen {
 		return
 	}
-	c.event("first_output_flush", time.Now())
+	c.event("first_output_flush", c.now())
+}
+
+// SSEEventFlushed observes a complete non-heartbeat data event successfully
+// flushed by the host. It establishes neither model output nor client receipt.
+func SSEEventFlushed(ctx context.Context) {
+	c := From(ctx)
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finished || c.data.DownstreamError {
+		return
+	}
+	if tr, ok := ctx.Value(attemptKey{}).(*Trace); ok && tr.c == c && tr.logicalResponse && c.data.Attempts[tr.index].EndMS != nil {
+		return
+	}
+	now := c.now()
+	c.event("first_sse_event_flush", now)
+	if tr, ok := ctx.Value(attemptKey{}).(*Trace); ok && tr.c == c {
+		for index := tr.index; index >= 0; {
+			a := &c.data.Attempts[index]
+			if _, exists := a.Events["first_sse_event_flush"]; !exists {
+				a.Events["first_sse_event_flush"] = c.offset(now)
+			}
+			index = a.Parent - 1
+		}
+	}
 }
 
 // TerminalFlushed records successful local write/flush completion, not receipt
@@ -99,5 +130,5 @@ func TerminalFlushed(ctx context.Context, terminal string) {
 		return
 	}
 	c.data.TerminalFlushed = terminal
-	c.event("terminal_output_flush", time.Now())
+	c.event("terminal_output_flush", c.now())
 }

@@ -314,8 +314,27 @@ func (s *OpenAIGatewayService) latestOpenAITurnAccountForGroup(
 			return nil, denyOpenAITurn("latest_state_unavailable")
 		}
 	}
-	if latest.Platform != selected.Platform || latest.Type != selected.Type {
+	if latest.Platform != selected.Platform || (latest.Type != selected.Type && selected.AuthConnectionID == "") {
 		return nil, denyOpenAITurn("account_binding_changed")
+	}
+	// Independent AI pauses must be checked at the final send boundary as well
+	// as slot acquisition. The normal account admission cache cannot grant
+	// permission after an AI control transaction paused the selected account.
+	if s != nil && s.accountRepo != nil && (s.schedulerSnapshot == nil || s.schedulerSnapshot.localSnapshotReader == nil) {
+		if guard, ok := s.accountRepo.(interface {
+			AIOpsRuntime(context.Context, []int64) (map[int64]AIOpsRuntime, error)
+		}); ok {
+			checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+			controls, err := guard.AIOpsRuntime(checkCtx, []int64{latest.ID})
+			cancel()
+			if err != nil {
+				return nil, denyOpenAITurn("latest_state_unavailable")
+			}
+			control, found := controls[latest.ID]
+			if !found || control.Paused {
+				return nil, denyOpenAITurn("account_ineligible")
+			}
+		}
 	}
 	if authoritativeRead && !latest.IsSchedulable() {
 		return nil, denyOpenAITurn("account_ineligible")
@@ -349,10 +368,17 @@ func (s *OpenAIGatewayService) latestOpenAITurnAccountForGroup(
 // an admission point, not an atomic transaction spanning SQL and network I/O.
 func (s *OpenAIGatewayService) admitOpenAITurn(ctx context.Context, c *gin.Context, selected *Account, outboundModel string, payload ...[]byte) (*Account, error) {
 	if len(payload) > 0 {
+		if err := s.checkAPIKeyLongContextBeforeSend(ctx, c, payload[0], outboundModel); err != nil {
+			return nil, err
+		}
 		ctx = WithOpenAIImageGenerationRequest(ctx, outboundModel, payload[0])
 	}
 	groupID, enforceGroup := openAITurnAdmissionGroupFromContext(c)
-	return s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, enforceGroup)
+	latest, err := s.admitOpenAITurnWithGroup(ctx, selected, outboundModel, groupID, enforceGroup)
+	if err != nil {
+		return nil, err
+	}
+	return s.prepareAuthConnection(ctx, c, latest, selected, outboundModel)
 }
 
 // admitOpenAITurnForGroup is used by connection-pool callbacks, which run
@@ -386,7 +412,7 @@ func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
 	if err != nil {
 		return nil, err
 	}
-	if err := s.validateExcelOAuthRoute(ctx, latest, outboundModel); err != nil {
+	if err := s.validateExcelOAuthRoute(ctx, latest, outboundModel); err != nil && !latest.HasManagedOpenAIConnections() {
 		return nil, &OpenAITurnAdmissionError{Reason: excelOAuthRouteErrorCode, cause: err}
 	}
 	// 会话中途被收窄了分组内的可用模型、或后续 turn 换成了不允许的模型时，要求客户端重连重新选号。
@@ -396,7 +422,7 @@ func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
 	if !latest.IsOpenAI() {
 		return latest, nil
 	}
-	if openAITurnRouteFingerprint(latest) != openAITurnRouteFingerprint(selected) {
+	if openAITurnRouteFingerprint(latest) != openAITurnRouteFingerprint(selected) && (!latest.HasManagedOpenAIConnections() || selected.AuthConnectionID == "") {
 		return nil, denyOpenAITurn("account_binding_changed")
 	}
 	// Preserve the cause of a model-not-found cooldown before the generic
@@ -418,7 +444,7 @@ func (s *OpenAIGatewayService) admitOpenAITurnWithGroup(
 			latest.isRateLimitActiveForKey(openAIImageGenerationRateLimitKey))) {
 		return nil, denyOpenAITurn("model_rate_limited")
 	}
-	if s.openAICodexTicketBlocksAccount(latest, outboundModel) {
+	if !latest.HasManagedOpenAIConnections() && s.openAICodexTicketBlocksAccount(latest, outboundModel) {
 		return nil, denyOpenAITicket()
 	}
 	return latest, nil

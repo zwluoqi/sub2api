@@ -61,3 +61,36 @@ func TestGPT61SolIdentityAndEffort(t *testing.T) {
 	}
 	require.Contains(t, CodexBaseInstructionsForModel("gpt-6.1-sol"), "based on GPT-6")
 }
+
+func TestDefaultModelsIncludeGPTImage26(t *testing.T) {
+	for _, model := range []string{"gpt-image-2.6-flare", "gpt-image-2.6-sunburst"} {
+		require.Contains(t, DefaultModelIDs(), model)
+	}
+	for _, model := range []string{"gpt-5.2", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5", "gpt-image-1", "gpt-image-1.5"} {
+		require.NotContains(t, DefaultModelIDs(), model)
+	}
+}
+
+func TestGPT61TerraEffortValidation(t *testing.T) {
+	for _, model := range []string{"gpt-6.1-terra", "openai/GPT_6.1_TERRA", "gpt-6.1-terra-minimal", "openai/gpt_6.1_terra_minimal"} {
+		require.True(t, IsGPT61TerraModelSpelling(model), model)
+		for _, effort := range []string{"minimal", " MINIMAL "} {
+			require.ErrorContains(t, ValidateGPT61TerraReasoningEffort(model, effort), "gpt-6.1-terra does not support")
+			require.Error(t, ValidateGPT61ReasoningEffort(model, effort))
+		}
+		for _, effort := range []string{"", "none", "low", "medium", "high", "xhigh", "max"} {
+			require.NoError(t, ValidateGPT61ReasoningEffort(model, effort))
+		}
+	}
+	for _, effort := range []string{"none", "minimal"} {
+		require.Error(t, ValidateGPT61ReasoningEffort("gpt-6.1-sol", effort))
+		require.NoError(t, ValidateGPT61ReasoningEffort("gpt-6-sol", effort))
+	}
+}
+
+func TestDefaultModelMetadata(t *testing.T) {
+	for _, model := range DefaultModels {
+		require.Positive(t, model.Created, model.ID)
+		require.NotEmpty(t, model.DisplayName, model.ID)
+	}
+}

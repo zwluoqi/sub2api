@@ -9,25 +9,74 @@ const appStoreMocks = vi.hoisted(() => ({
   showError: vi.fn(),
   cachedPublicSettings: undefined as { usage_show_long_context_badge?: boolean; usage_show_cache_rate?: boolean; usage_show_cache_rate_to_users?: boolean; usage_show_upstream_response_model_to_users?: boolean } | undefined,
 }))
+const timingAPIMocks = vi.hoisted(() => ({ get: vi.fn() }))
 
 vi.mock('@/utils/ipGeoLookup', () => ipGeoMocks)
 vi.mock('@/stores/app', () => ({ useAppStore: () => appStoreMocks }))
+vi.mock('@/api/admin/usageTiming', () => ({ getUsageTiming: timingAPIMocks.get }))
 
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
+import { useNewFeatureNoticeStore } from '@/stores/newFeatureNotices'
+import { observerUsageContext } from '../observerUsageContext'
 
 import en from '@/i18n/locales/en/admin/resources'
 import zh from '@/i18n/locales/zh/admin/resources'
 import UsageTable from '../UsageTable.vue'
+import enDashboard from '@/i18n/locales/en/dashboard'
+import zhDashboard from '@/i18n/locales/zh/dashboard'
+import enTiming from '@/i18n/locales/en/requestTiming'
+import zhTiming from '@/i18n/locales/zh/requestTiming'
+import enLatencyObservability from '@/i18n/locales/en/latencyObservability'
+import zhLatencyObservability from '@/i18n/locales/zh/latencyObservability'
 
 let locale: 'en' | 'zh' = 'en'
 const localizedMessages: Record<'en' | 'zh', Record<string, string>> = {
   en: {
+    'requestTiming.eventShort': enTiming.eventShort,
+    'requestTiming.semanticShort': enTiming.semanticShort,
+    'requestTiming.textShort': enTiming.textShort,
+    'requestTiming.contentOrigin': enTiming.contentOrigin,
+    'requestTiming.legacyFirst': enTiming.legacyFirst,
+    'requestTiming.legacyTotal': enTiming.legacyTotal,
+    'usage.latencyFirstTokenHint': enDashboard.usage.latencyFirstTokenHint,
+    'usage.latencyDurationHint': enDashboard.usage.latencyDurationHint,
+    'usage.latencyFirstToken': enDashboard.usage.latencyFirstToken,
+    'usage.latencyFirstTokenShort': enDashboard.usage.latencyFirstTokenShort,
+    'usage.latencyDuration': enDashboard.usage.latencyDuration,
+    'usage.latencyDurationShort': enDashboard.usage.latencyDurationShort,
+    'usage.latencyTps': enDashboard.usage.latencyTps,
+    'usage.latencyCacheRate': enDashboard.usage.latencyCacheRate,
+    'latencyObservability.reasoning_first_ms': enLatencyObservability.reasoning_first_ms,
+    'latencyObservability.visible_text_first_ms': enLatencyObservability.visible_text_first_ms,
+    'latencyObservability.response_byte_first_ms': enLatencyObservability.response_byte_first_ms,
+    'latencyObservability.typedScope': enLatencyObservability.typedScope,
     'admin.usage.longContext': en.usage.longContext,
     'admin.usage.longContextPricingTooltip': en.usage.longContextPricingTooltip,
   },
   zh: {
+    'requestTiming.eventShort': zhTiming.eventShort,
+    'requestTiming.semanticShort': zhTiming.semanticShort,
+    'requestTiming.textShort': zhTiming.textShort,
+    'requestTiming.contentOrigin': zhTiming.contentOrigin,
+    'requestTiming.legacyFirst': zhTiming.legacyFirst,
+    'requestTiming.legacyTotal': zhTiming.legacyTotal,
+    'usage.latencyFirstTokenHint': zhDashboard.usage.latencyFirstTokenHint,
+    'usage.latencyDurationHint': zhDashboard.usage.latencyDurationHint,
+    'usage.latencyFirstToken': zhDashboard.usage.latencyFirstToken,
+    'usage.latencyFirstTokenShort': zhDashboard.usage.latencyFirstTokenShort,
+    'usage.latencyDuration': zhDashboard.usage.latencyDuration,
+    'usage.latencyDurationShort': zhDashboard.usage.latencyDurationShort,
+    'usage.latencyTps': zhDashboard.usage.latencyTps,
+    'usage.latencyCacheRate': zhDashboard.usage.latencyCacheRate,
+    'latencyObservability.reasoning_first_ms': zhLatencyObservability.reasoning_first_ms,
+    'latencyObservability.visible_text_first_ms': zhLatencyObservability.visible_text_first_ms,
+    'latencyObservability.response_byte_first_ms': zhLatencyObservability.response_byte_first_ms,
+    'latencyObservability.typedScope': zhLatencyObservability.typedScope,
     'admin.usage.longContext': zh.usage.longContext,
     'admin.usage.longContextPricingTooltip': zh.usage.longContextPricingTooltip,
   },
@@ -96,7 +145,10 @@ vi.mock('vue-i18n', async () => {
   return {
     ...actual,
     useI18n: () => ({
-      t: (key: string) => localizedMessages[locale][key] ?? messages[key] ?? key,
+      t: (key: string, params?: Record<string, string | number>) => {
+        const message = localizedMessages[locale][key] ?? messages[key] ?? key
+        return Object.entries(params ?? {}).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, String(value)), message)
+      },
     }),
   }
 })
@@ -148,6 +200,26 @@ const baseImageRow = {
 }
 
 describe('admin UsageTable tooltip', () => {
+  it('shows the two OpenAI cache-write buckets without Anthropic lifetime labels', async () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', cache_creation_tokens: 2399, cache_creation_30m_tokens: 9, cache_creation_12h_tokens: 2390 }
+    const wrapper = mount(UsageTable, {
+      props: { data: [row], loading: false, columns: [] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    try {
+      await wrapper.find('.group.relative').trigger('mouseenter')
+      await nextTick()
+      const text = wrapper.get('.fixed').text()
+      expect(text).toContain('30m')
+      expect(text).toContain('12h')
+      expect(text).toContain('2,390')
+      expect(text).not.toContain('5m')
+      expect(text).not.toMatch(/\b1h\b/)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('shows output TPS in the latency cell using total duration', () => {
     const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 1000, duration_ms: 20_000, first_token_ms: 10_000 }
     const wrapper = mount(UsageTable, {
@@ -160,6 +232,33 @@ describe('admin UsageTable tooltip', () => {
     })
     expect(wrapper.findAll('[data-testid="latency-tps"]').map(cell => cell.text())).toEqual(['50.0 t/s', '-', '-'])
     expect(wrapper.text()).toContain('Avg TPS')
+  })
+
+  it('keeps queue-inclusive first token without disclosing the queue portion', () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 100, duration_ms: 20_000, first_token_ms: 2_000, queue_wait_ms: 30_000,
+      queue_timing: { status: 'measured', source: 'ws_frame_ctx_pool', scope: 'pre_final_forward', queue_clamped: false,
+        server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 } }
+    const wrapper = mount(UsageTable, {
+      props: { data: [row], loading: false, columns: [{ key: 'latency', label: 'Latency' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.text()).toContain('32.00s')
+    expect(wrapper.text()).toContain('50.00s')
+    expect(wrapper.text()).not.toContain('30.00s')
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
+  })
+
+  it('PR610 keeps passthrough overlap out of the server total and retains legacy TPS', () => {
+    const row = { ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 100, first_token_ms: 32_000, duration_ms: 50_000, queue_wait_ms: 30_000,
+      queue_timing: { status: 'measured', source: 'ws_frame_passthrough', scope: 'accepted_frame_including_admission', queue_clamped: false,
+        server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 } }
+    const wrapper = mount(UsageTable, { props: { data: [row], loading: false, columns: [{ key: 'latency', label: 'Latency' }] }, global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } } })
+    expect(wrapper.text()).toContain('32.00s')
+    expect(wrapper.text()).toContain('50.00s')
+    expect(wrapper.text()).not.toContain('62.00s')
+    expect(wrapper.get('[data-testid="latency-tps"]').text()).toBe('2.0 t/s')
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
+    wrapper.unmount()
   })
 
   beforeEach(() => {
@@ -981,6 +1080,19 @@ const DataTableStubWithLatency = {
   `,
 }
 
+const DataTableStubWithContentTiming = {
+  props: ['data'],
+  template: `
+    <div>
+      <div v-for="row in data" :key="row.request_id" :data-row="row.request_id">
+        <slot name="cell-content_reasoning_first_ms" :row="row" />
+        <slot name="cell-content_visible_text_first_ms" :row="row" />
+        <slot name="cell-content_response_byte_first_ms" :row="row" />
+      </div>
+    </div>
+  `,
+}
+
 describe('admin UsageTable latency TPS', () => {
   const mountLatency = (data: Record<string, unknown>[], extra: Record<string, unknown> = {}) =>
     mount(UsageTable, {
@@ -1149,4 +1261,184 @@ describe('admin UsageTable latency TPS', () => {
     expect(shown.find('[data-testid="latency-cache-rate"]').text()).toBe('98.6%')
     appStoreMocks.cachedPublicSettings = undefined
   })
+})
+
+for (const [language, first, total] of [['en', 'Server TTFT', 'Server total'], ['zh', '服务端首字', '服务端总耗时']] as const) {
+  it(`keeps the original four latency rows and omits typed-content timing in ${language}`, () => {
+    locale = language
+    const dashboardMessages = language === 'en' ? enDashboard : zhDashboard
+    appStoreMocks.cachedPublicSettings = { usage_show_cache_rate: true }
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, image_count: 0, billing_mode: 'token', output_tokens: 100, duration_ms: 20_000, first_token_ms: 2_000, queue_wait_ms: 30_000,
+        queue_timing: { status: 'measured', source: 'ws_frame_ctx_pool', scope: 'pre_final_forward', queue_clamped: false, server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 },
+        content_timing: { reasoning_first_ms: 120, visible_text_first_ms: 450, response_byte_first_ms: 30 } }], loading: false, columns: [{ key: 'latency', label: 'Latency' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.text()).toContain(first)
+    expect(wrapper.text()).toContain(total)
+    expect(wrapper.text()).toContain('32.00s')
+    expect(wrapper.text()).toContain('50.00s')
+    expect(wrapper.findAll('[class*="col-start-2"][class*="row-start-"]').map(node => node.text())).toEqual([
+      dashboardMessages.usage.latencyFirstToken,
+      dashboardMessages.usage.latencyDuration,
+      dashboardMessages.usage.latencyTps,
+      dashboardMessages.usage.latencyCacheRate,
+    ])
+    expect(wrapper.find('[data-testid="typed-content-timing"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="latency-e2e-uncollected"]').exists()).toBe(false)
+    wrapper.unmount()
+    appStoreMocks.cachedPublicSettings = undefined
+    locale = 'en'
+  })
+}
+
+it('keeps queue-inclusive admin latency compact and explains server boundaries on hover', () => {
+  const row = {
+    ...baseImageRow,
+    image_count: 0,
+    billing_mode: 'token',
+    output_tokens: 100,
+    duration_ms: 20_000,
+    first_token_ms: 2_000,
+    queue_wait_ms: 30_000,
+    queue_timing: {
+      status: 'measured',
+      source: 'ws_frame_ctx_pool',
+      scope: 'pre_final_forward',
+      queue_clamped: false,
+      server_first_token_ms: 32_000,
+      server_duration_ms: 50_000,
+      forward_first_token_ms: 2_000,
+      forward_duration_ms: 20_000,
+    },
+  }
+  const wrapper = mount(UsageTable, {
+    props: { data: [row], loading: false, enableTimingDetails: true, columns: [{ key: 'latency', label: 'Latency' }] },
+    global: { stubs: { DataTable: DataTableStubWithLatency, EmptyState: true, Icon: true, Teleport: true } },
+  })
+
+  expect(wrapper.text()).toContain('First token')
+  expect(wrapper.text()).toContain('Total')
+  expect(wrapper.text()).toContain('32.00s')
+  expect(wrapper.text()).toContain('50.00s')
+  expect(wrapper.text()).not.toContain('incl. pre-forward wait')
+  expect(wrapper.text()).not.toContain('30.00s')
+  const firstValue = wrapper.findAll('span').find((span) => span.text() === '32.00s')
+  const totalValue = wrapper.findAll('span').find((span) => span.text() === '50.00s')
+  expect(firstValue?.attributes('title')).not.toContain('30.00s')
+  expect(firstValue?.attributes('title')).toContain('sampled server boundaries')
+  expect(totalValue?.attributes('title')).not.toContain('30.00s')
+  expect(totalValue?.attributes('title')).toContain('sampled server boundaries')
+  wrapper.unmount()
+})
+
+it('renders content timing in separate columns and uses a dash for missing values', () => {
+  const wrapper = mount(UsageTable, {
+    props: {
+      data: [
+        {
+          ...baseImageRow,
+          request_id: 'timing-measured',
+          content_timing: {
+            reasoning_first_ms: 120,
+            visible_text_first_ms: 1_330,
+            response_byte_first_ms: 30,
+            status: 'measured',
+            source: 'fixture',
+            scope: 'final_physical_http_attempt_offsets_from_application_entry',
+            reasoning_streaming_capability: 'unknown',
+            capability_source: 'none',
+          },
+        },
+        { ...baseImageRow, request_id: 'timing-missing', content_timing: null },
+      ],
+      loading: false,
+      columns: [
+        { key: 'content_reasoning_first_ms', label: enLatencyObservability.reasoning_first_ms },
+        { key: 'content_visible_text_first_ms', label: enLatencyObservability.visible_text_first_ms },
+        { key: 'content_response_byte_first_ms', label: enLatencyObservability.response_byte_first_ms },
+      ],
+    },
+    global: { stubs: { DataTable: DataTableStubWithContentTiming, EmptyState: true, Icon: true, Teleport: true } },
+  })
+
+  expect(wrapper.find('[data-testid="content-timing-reasoning-first"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="content-timing-visible-text-first"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="content-timing-response-byte-first"]').exists()).toBe(false)
+  expect(wrapper.text()).not.toContain('Client end-to-end time')
+  wrapper.unmount()
+})
+
+for (const language of ['en', 'zh'] as const) {
+  it(`omits the streaming content timing summary from the latency cell in ${language}`, async () => {
+    locale = language
+    const timing = language === 'en' ? enTiming : zhTiming
+    const wrapper = mount(UsageTable, {
+      props: { data: [{ ...baseImageRow, stream: true, first_token_ms: 300,
+        content_timing: { sse_event_first_ms: 100, semantic_first_ms: 300, visible_text_first_ms: 800 } }],
+        loading: false, enableTimingDetails: true, columns: [{ key: 'latency', label: 'Latency' }] },
+      global: { stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true } },
+    })
+    expect(wrapper.find('[data-testid="latency-content-timing"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(`${timing.eventShort} 100ms`)
+    expect(wrapper.text()).not.toContain(`${timing.semanticShort} 300ms`)
+    expect(wrapper.text()).not.toContain(`${timing.textShort} 800ms`)
+    await wrapper.setProps({ data: [{ ...baseImageRow, stream: true, first_token_ms: 300 }] })
+    expect(wrapper.find('[data-testid="latency-content-timing"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain(`${timing.eventShort} —`)
+    expect(wrapper.text()).not.toContain(`${timing.semanticShort} —`)
+    expect(wrapper.text()).not.toContain(`${timing.textShort} —`)
+    await wrapper.setProps({ data: [{ ...baseImageRow, stream: false, first_token_ms: 300 }] })
+    expect(wrapper.find('[data-testid="latency-content-timing"]').exists()).toBe(false)
+    await wrapper.setProps({ data: [{ ...baseImageRow, stream: true, first_token_ms: 300 }] })
+    await wrapper.setProps({ enableTimingDetails: false })
+    expect(wrapper.find('[data-testid="latency-content-timing"]').exists()).toBe(false)
+    wrapper.unmount()
+    locale = 'en'
+  })
+}
+
+it('shares the timing notice between the usage table and details and preserves the dismissal after reload', async () => {
+  locale = 'en'
+  localStorage.clear()
+  timingAPIMocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
+  let pinia = createPinia()
+  setActivePinia(pinia)
+  const oldNotice = NEW_FEATURE_NOTICES.protocolFeatureSwitches
+  useNewFeatureNoticeStore().dismiss(41, oldNotice)
+  const renderTable = (observer = false) => mount(UsageTable, {
+    props: { data: [{ ...baseImageRow, id: 41, stream: true }], columns: [{ key: 'latency', label: 'Latency' }], enableTimingDetails: true, noticeUserId: 41 },
+    global: {
+      plugins: [pinia],
+      provide: { [observerUsageContext as symbol]: observer },
+      stubs: { DataTable: DataTableStub, EmptyState: true, Icon: true, Teleport: true, BaseDialog: { template: '<section><slot /></section>' } },
+    },
+  })
+  const table = renderTable()
+  try {
+    expect(table.findAll('[data-testid="new-feature-badge"]')).toHaveLength(1)
+    await table.get('button[aria-label="requestTiming.title"]').trigger('click')
+    await flushPromises()
+    expect(table.findAll('[data-testid="new-feature-badge"]')).toHaveLength(2)
+    expect(table.findAllComponents(NewFeatureBadge).every(b => b.props('noticeId') === NEW_FEATURE_NOTICES.streamFirstEventTiming)).toBe(true)
+    await table.get('[data-testid="final-content-timing"] [data-testid="new-feature-badge"]').trigger('click')
+    expect(table.findAll('[data-testid="new-feature-badge"]')).toHaveLength(0)
+  } finally {
+    table.unmount()
+  }
+  pinia = createPinia()
+  setActivePinia(pinia)
+  const refreshed = renderTable()
+  const old = mount(NewFeatureBadge, { props: { noticeId: oldNotice, userId: 41 }, global: { plugins: [pinia] } })
+  const next = mount(NewFeatureBadge, { props: { noticeId: 'fixture-next-stream-feature-C', userId: 41 }, global: { plugins: [pinia] } })
+  const observer = renderTable(true)
+  try {
+    expect(refreshed.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+    expect(old.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+    expect(next.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
+    expect(observer.findComponent(NewFeatureBadge).exists()).toBe(false)
+  } finally {
+    for (const wrapper of [refreshed, old, next, observer]) wrapper.unmount()
+    localStorage.clear()
+  }
 })

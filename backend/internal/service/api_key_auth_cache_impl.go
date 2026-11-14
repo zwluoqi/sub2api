@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/rand/v2"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/dgraph-io/ristretto"
 )
 
-const apiKeyAuthSnapshotVersion = 31 // v31: group image_count_billing; preserve configured groups and local epochs
+const apiKeyAuthSnapshotVersion = 34 // v34: per-key input context token ceiling
 
 // Local-only generation wrapper. Old entries remain bounded by existing TTL
 // and capacity, but cannot authorize after a subscription recovery checkpoint.
@@ -370,22 +371,26 @@ func (s *APIKeyService) snapshotFromAPIKey(ctx context.Context, apiKey *APIKey) 
 		return nil
 	}
 	snapshot := &APIKeyAuthSnapshot{
-		Version:          apiKeyAuthSnapshotVersion,
-		APIKeyID:         apiKey.ID,
-		UserID:           apiKey.UserID,
-		GroupIDs:         append([]int64(nil), apiKey.GroupIDs...),
-		GroupID:          apiKey.GroupID,
-		Name:             apiKey.Name,
-		Status:           apiKey.Status,
-		IPWhitelist:      apiKey.IPWhitelist,
-		IPBlacklist:      apiKey.IPBlacklist,
-		Quota:            apiKey.Quota,
-		QuotaUsed:        apiKey.QuotaUsed,
-		ExpiresAt:        apiKey.ExpiresAt,
-		RateLimit5h:      apiKey.RateLimit5h,
-		ConcurrencyLimit: apiKey.ConcurrencyLimit,
-		RateLimit1d:      apiKey.RateLimit1d,
-		RateLimit7d:      apiKey.RateLimit7d,
+		Version:           apiKeyAuthSnapshotVersion,
+		APIKeyID:          apiKey.ID,
+		UserID:            apiKey.UserID,
+		GroupIDs:          append([]int64(nil), apiKey.GroupIDs...),
+		GroupID:           apiKey.GroupID,
+		Name:              apiKey.Name,
+		Status:            apiKey.Status,
+		ModelMapping:      maps.Clone(apiKey.ModelMapping),
+		ReasoningEffort:   apiKey.ReasoningEffort,
+		AllowLongContext:  apiKey.AllowLongContext,
+		ContextTokenLimit: apiKey.ContextTokenLimit,
+		IPWhitelist:       apiKey.IPWhitelist,
+		IPBlacklist:       apiKey.IPBlacklist,
+		Quota:             apiKey.Quota,
+		QuotaUsed:         apiKey.QuotaUsed,
+		ExpiresAt:         apiKey.ExpiresAt,
+		RateLimit5h:       apiKey.RateLimit5h,
+		ConcurrencyLimit:  apiKey.ConcurrencyLimit,
+		RateLimit1d:       apiKey.RateLimit1d,
+		RateLimit7d:       apiKey.RateLimit7d,
 		User: APIKeyAuthUserSnapshot{
 			ID:                         apiKey.User.ID,
 			Status:                     apiKey.User.Status,
@@ -486,22 +491,26 @@ func (s *APIKeyService) snapshotToAPIKey(key string, snapshot *APIKeyAuthSnapsho
 		return nil
 	}
 	apiKey := &APIKey{
-		ID:               snapshot.APIKeyID,
-		UserID:           snapshot.UserID,
-		GroupIDs:         append([]int64(nil), snapshot.GroupIDs...),
-		GroupID:          snapshot.GroupID,
-		Key:              key,
-		Name:             snapshot.Name,
-		Status:           snapshot.Status,
-		IPWhitelist:      snapshot.IPWhitelist,
-		IPBlacklist:      snapshot.IPBlacklist,
-		Quota:            snapshot.Quota,
-		QuotaUsed:        snapshot.QuotaUsed,
-		ExpiresAt:        snapshot.ExpiresAt,
-		RateLimit5h:      snapshot.RateLimit5h,
-		ConcurrencyLimit: snapshot.ConcurrencyLimit,
-		RateLimit1d:      snapshot.RateLimit1d,
-		RateLimit7d:      snapshot.RateLimit7d,
+		ID:                snapshot.APIKeyID,
+		UserID:            snapshot.UserID,
+		GroupIDs:          append([]int64(nil), snapshot.GroupIDs...),
+		GroupID:           snapshot.GroupID,
+		Key:               key,
+		Name:              snapshot.Name,
+		Status:            snapshot.Status,
+		ModelMapping:      maps.Clone(snapshot.ModelMapping),
+		ReasoningEffort:   snapshot.ReasoningEffort,
+		AllowLongContext:  snapshot.AllowLongContext,
+		ContextTokenLimit: snapshot.ContextTokenLimit,
+		IPWhitelist:       snapshot.IPWhitelist,
+		IPBlacklist:       snapshot.IPBlacklist,
+		Quota:             snapshot.Quota,
+		QuotaUsed:         snapshot.QuotaUsed,
+		ExpiresAt:         snapshot.ExpiresAt,
+		RateLimit5h:       snapshot.RateLimit5h,
+		ConcurrencyLimit:  snapshot.ConcurrencyLimit,
+		RateLimit1d:       snapshot.RateLimit1d,
+		RateLimit7d:       snapshot.RateLimit7d,
 		User: &User{
 			ID:                         snapshot.User.ID,
 			Status:                     snapshot.User.Status,

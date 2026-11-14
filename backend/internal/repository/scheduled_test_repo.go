@@ -154,6 +154,15 @@ func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) erro
 	} else if err != nil {
 		return err
 	}
+	if err := deleteScheduledTestPlanTx(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// The caller holds the plan lock. Manual and automated deletion share exactly
+// the same ownership checks and never restore or modify the account.
+func deleteScheduledTestPlanTx(ctx context.Context, tx *sql.Tx, id int64) error {
 	state, err := readQualityState(ctx, tx, id)
 	if err != nil {
 		return err
@@ -190,7 +199,7 @@ func (r *scheduledTestPlanRepository) Delete(ctx context.Context, id int64) erro
 	if _, err = tx.ExecContext(ctx, `DELETE FROM scheduled_test_plans WHERE id=$1`, id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
 }
 
 func (r *scheduledTestPlanRepository) UpdateAfterRun(ctx context.Context, id int64, lastRunAt time.Time, nextRunAt time.Time) error {
@@ -211,7 +220,11 @@ func NewScheduledTestResultRepository(db *sql.DB) service.ScheduledTestResultRep
 }
 
 func (r *scheduledTestResultRepository) Create(ctx context.Context, result *service.ScheduledTestResult) (*service.ScheduledTestResult, error) {
-	row := r.db.QueryRowContext(ctx, `
+	return insertScheduledTestResult(ctx, r.db, result)
+}
+
+func insertScheduledTestResult(ctx context.Context, q planRowQuerier, result *service.ScheduledTestResult) (*service.ScheduledTestResult, error) {
+	row := q.QueryRowContext(ctx, `
 		INSERT INTO scheduled_test_results (plan_id, status, response_text, error_message, latency_ms, started_at, finished_at, created_at, pelican_config, quality_action, quality_judgment, quality_round_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11)
 		RETURNING id, plan_id, status, response_text, error_message, latency_ms, started_at, finished_at, created_at, pelican_config, quality_action, quality_judgment, quality_round_id
@@ -316,6 +329,13 @@ func scanPlan(row scannable, withAccountName ...bool) (*service.ScheduledTestPla
 		if err := json.Unmarshal(config, &p.PelicanConfig); err != nil {
 			return nil, err
 		}
+		var internal struct {
+			ManualQualityRun bool `json:"_manual_quality_run"`
+		}
+		if err := json.Unmarshal(config, &internal); err != nil {
+			return nil, err
+		}
+		p.ManualQualityRun = internal.ManualQualityRun
 	}
 	return p, nil
 }
@@ -355,13 +375,16 @@ func (r *scheduledTestPlanRepository) ClaimPelican(ctx context.Context, plan *se
 		return false, nil
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE scheduled_test_plans
- SET running_until = $3, next_run_at = $4
+ SET running_until = $3, next_run_at = $4, pelican_config = pelican_config - '_manual_quality_run'
  WHERE id = $1 AND enabled = true
  AND (next_run_at <= $2 OR ($7 AND pelican_config->'quality'->>'trigger_on_upstream_5xx'='true'))
  AND (NOT $7 OR (pelican_config->'quality'->>'trigger_on_upstream_5xx'='true'
    AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id=account_id AND type='oauth')
    AND ($8::timestamptz IS NULL OR last_run_at IS NULL OR last_run_at < $8 OR pelican_config->'quality'->>'action'='remove_models')))
  AND (running_until IS NULL OR running_until < $2) AND updated_at = $5 AND next_run_at = $6
+ AND NOT EXISTS (SELECT 1 FROM account_quality_states rest WHERE rest.plan_id=scheduled_test_plans.id
+ AND COALESCE((pelican_config->'quality'->>'retest_rest_minutes')::int,0)>0
+ AND (rest.state->>'retest_after')::timestamptz>$2)
  AND EXISTS (SELECT 1 FROM accounts WHERE accounts.id = account_id AND deleted_at IS NULL)
  AND NOT EXISTS (SELECT 1 FROM scheduled_test_plans other WHERE other.account_id = scheduled_test_plans.account_id
  AND other.id <> scheduled_test_plans.id AND other.pelican_config IS NOT NULL AND other.running_until > $2)`, plan.ID, now, until, next, plan.UpdatedAt, plan.NextRunAt, plan.TriggerSource == "upstream_5xx", plan.TriggerObservedAt)
@@ -382,6 +405,11 @@ func (r *scheduledTestPlanRepository) ClaimPelican(ctx context.Context, plan *se
 	}
 	if n == 1 && plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil && plan.PelicanConfig.Quality.Action == service.QualityActionRemoveModel {
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT (state->>'quality_5xx_episode')::bigint FROM account_quality_states WHERE plan_id=$1),0)`, plan.ID).Scan(&plan.Quality5xxEpisode); err != nil {
+			return false, err
+		}
+	}
+	if n == 1 && plan.PelicanConfig != nil && plan.PelicanConfig.Quality != nil && plan.PelicanConfig.Quality.OAuth401MaxRounds > 0 {
+		if err := claimQualityOAuth401Tx(ctx, tx, plan, until); err != nil {
 			return false, err
 		}
 	}

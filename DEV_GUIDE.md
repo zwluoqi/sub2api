@@ -53,7 +53,7 @@ npm install -g pnpm
 
 ### CI 要求
 
-- Go 版本必须是 **1.27.3**：三个 workflow 都用 `go-version-file: backend/go.mod` 取版本，随后硬断言 `go version | grep -q 'go1.27.3'`。升级 Go 时要同时改 `backend/go.mod`、`backend-ci.yml`（两处）、`release.yml`、`security-scan.yml` 里的这句断言，**以及三个 Dockerfile 里的 Go 构建镜像**（`Dockerfile` / `deploy/Dockerfile` 的 `ARG GOLANG_IMAGE`、`backend/Dockerfile` 的 `FROM golang:`）。前者漏了 CI 会在版本校验步骤直接失败；**后者漏了 CI 不会报，而是等到有人用这些 Dockerfile 构建时才失败**（`go.mod requires go >= X (running Y; GOTOOLCHAIN=local)`）。
+- Go 版本必须是 **1.27.4**：四个 workflow 从当前 checkout 的 `backend/go.mod` 取版本，随后校验 `go version` 输出包含 `go1.27.4`。升级 Go 时要同时改 `backend/go.mod`、`backend-ci.yml`（两处）、`release.yml`、`security-scan.yml` 及 `issue765-image-scheduler.yml`（两处）里的版本断言，**以及三个 Dockerfile 里的 Go 构建镜像**（`Dockerfile` / `deploy/Dockerfile` 的 `ARG GOLANG_IMAGE`、`backend/Dockerfile` 的 `FROM golang:`）。前者漏了 CI 会在版本校验步骤直接失败；**后者漏了 CI 不会报，而是等到有人用这些 Dockerfile 构建时才失败**（`go.mod requires go >= X (running Y; GOTOOLCHAIN=local)`）。
 - 前端使用 `pnpm install --frozen-lockfile`，必须提交 `pnpm-lock.yaml`
 
 ### 本地测试命令
@@ -242,6 +242,19 @@ git add ent/       # 生成的文件也要提交
 - [ ] `pnpm-lock.yaml` 已同步（如果改了 package.json）
 - [ ] 所有 test stub 补全新接口方法（如果改了 interface）
 - [ ] Ent 生成的代码已提交（如果改了 schema）
+
+### 新功能提示专项检查
+
+以下是贡献和审查要求，完整权威规则见[贡献指南：新功能提示登记与接入](CONTRIBUTING.md#新功能提示登记与接入)。按改动填写 PR 模板，非适用项逐项写“不适用 + 原因”：
+
+- [ ] 新增管理员可见功能、菜单、页签或设置项时，已在同一 PR 的 `frontend/src/constants/newFeatureNotices.ts` 登记稳定且唯一的新 ID，并在对应位置接入 `NewFeatureBadge`。
+- [ ] 同一功能多入口共用 ID，点击任一标签后相关入口同步隐藏；不同新功能使用不同 ID。
+- [ ] 普通修复、文案调整、重复发版沿用旧 ID；确需重新通知同一功能时，已明确作为新公告登记新 ID 并说明原因。
+- [ ] PR 已说明提示 ID、所有展示位置、关闭行为，并在同一 PR 补必要回归和证据，未留到 Release 发布后补录。
+- [ ] 已核对 A 已关闭后升级 B，新 ID 的 B 仍可见；B 任一入口的标签关闭后，所有相关入口同步隐藏。
+- [ ] 已核对同一浏览器同一管理员刷新/重新登录后 B 仍隐藏（本地存储可用且未清除）；后续 C 新 ID 正常显示，普通升级不复活 A/B。
+
+以上清单沿用当前浏览器、当前管理员 `localStorage` 的现有边界，不自动解析 Release，不承诺跨浏览器或服务端同步；这里只建立规范，不新增运行时功能。
 
 ## 五、常用命令速查
 

@@ -522,6 +522,7 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('env_key')
     expect(configToml).not.toContain('image_generation')
     expect(configToml).toContain('supports_websockets = true')
+    expect(configToml!.split('\n[')[0]).toContain('service_tier = "fast"')
     const features = configToml?.split('[features]\n')[1]?.split('\n[')[0]
     expect(features).toContain('responses_websockets_v2 = true')
     expect(features).toContain('goals = true')
@@ -731,6 +732,32 @@ describe('UseKeyModal', () => {
     expect(models['claude-sonnet-5-5'].variants).not.toHaveProperty('none')
   })
 
+  it.each([
+    ['claude-fable-5-2', 'Claude Fable 5.2'],
+    ['claude-mythos-5-2', 'Claude Mythos 5.2']
+  ])('exports %s on Anthropic with adaptive thinking and all supported effort levels', async (model, name) => {
+    const wrapper = mount(UseKeyModal, {
+      props: { show: true, apiKey: 'sk-test', baseUrl: 'https://example.com/v1', platform: 'anthropic' },
+      global: { stubs: { BaseDialog: { template: '<div><slot /><slot name="footer" /></div>' }, Icon: { template: '<span />' } } }
+    })
+    const tab = wrapper.findAll('button').find(button => button.text().includes('keys.useKeyModal.cliTabs.opencode'))
+    expect(tab).toBeDefined()
+    await tab!.trigger('click')
+    await nextTick()
+    const config = JSON.parse(wrapper.find('pre code').text()).provider.anthropic.models[model]
+    expect(config.name).toBe(name)
+    expect(config.limit).toEqual({ context: 1000000, output: 128000 })
+    expect(config.modalities).toEqual({ input: ['text', 'image', 'pdf'], output: ['text'] })
+    expect(config.options).toEqual({ thinking: { type: 'adaptive' }, effort: 'high' })
+    expect(config.variants).toEqual({
+      low: { effort: 'low' },
+      medium: { effort: 'medium' },
+      high: { effort: 'high' },
+      xhigh: { effort: 'xhigh' },
+      max: { effort: 'max' }
+    })
+  })
+
   it('renders Claude Fable 5 OpenCode config with adaptive thinking', async () => {
     const wrapper = mount(UseKeyModal, {
       props: {
@@ -765,6 +792,8 @@ describe('UseKeyModal', () => {
 
     expect(claudeConfig).toBeDefined()
     const parsed = JSON.parse(claudeConfig!)
+    expect(parsed.provider['antigravity-claude'].models).not.toHaveProperty('claude-fable-5-2')
+    expect(parsed.provider['antigravity-claude'].models).not.toHaveProperty('claude-mythos-5-2')
     const fable51 = parsed.provider['antigravity-claude'].models['claude-fable-5-1']
     const fable = parsed.provider['antigravity-claude'].models['claude-fable-5']
 
@@ -929,14 +958,13 @@ describe('UseKeyModal', () => {
     }
   )
 
-  // Scenario: the platform-preferred model remains selected when the downloaded catalog contains it.
-  it('keeps the preferred Composite default when it exists in the catalog', async () => {
+  it('uses the first available catalog model instead of the older Composite fallback', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       text: async () => JSON.stringify({
         models: [
-          { slug: 'claude-opus-4-8' },
+          { slug: 'gpt-6-astra' },
           { slug: 'gpt-5.5' }
         ]
       })
@@ -972,8 +1000,8 @@ describe('UseKeyModal', () => {
     const config = wrapper.findAll('pre code')
       .map((code) => code.text())
       .find((content) => content.includes('[model_providers.sub2api]'))
-    expect(config).toContain('model = "gpt-5.5"')
-    expect(config).toContain('review_model = "gpt-5.5"')
+    expect(config).toContain('model = "gpt-6-astra"')
+    expect(config).toContain('review_model = "gpt-6-astra"')
   })
 
   it('derives OpenAI Codex reasoning effort from the selected catalog descriptor', async () => {
@@ -1021,7 +1049,7 @@ describe('UseKeyModal', () => {
     expect(configToml).not.toContain('model_reasoning_effort')
   })
 
-  it('offers remote and optional file catalogs for OpenAI in both transport modes and on both platforms', async () => {
+  it.each(['legacy', 'api-key'])('offers Fast and remote/file catalogs across OpenAI transports and platforms in %s mode', async (authMode) => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const wrapper = mount(UseKeyModal, {
@@ -1043,6 +1071,7 @@ describe('UseKeyModal', () => {
       }
     })
 
+    await wrapper.get(`[data-testid="codex-auth-mode-${authMode}"]`).trigger('click')
     for (const transport of ['keys.useKeyModal.cliTabs.codexCli', 'keys.useKeyModal.cliTabs.codexCliWs']) {
       await wrapper.findAll('button').find((button) => button.text().trim() === transport)!.trigger('click')
       for (const os of ['macOS / Linux', 'Windows']) {
@@ -1051,10 +1080,11 @@ describe('UseKeyModal', () => {
           .map((code) => code.text())
           .find((content) => content.includes('model_provider = "OpenAI"'))
         expect(configToml).toContain('model = "gpt-5.5"')
+        expect(configToml!.split('\n[')[0]).toContain('service_tier = "fast"')
         expect(configToml).toContain('[model_providers.OpenAI]\nname = "OpenAI"\nbase_url = "https://example.com/v1"\nmodel_catalog_url = "https://example.com/v1/models"')
         expect(configToml).not.toContain('model_catalog_json')
         expect(configToml).toContain('[features]\napi_key_model_discovery = true')
-        expect(configToml).toContain('requires_openai_auth = true')
+        expect(configToml).toContain(`requires_openai_auth = ${authMode === 'legacy'}`)
         expect(configToml).not.toContain('client_version')
         expect(wrapper.find('[data-testid="codex-model-catalog"]').exists()).toBe(true)
 
@@ -1063,6 +1093,7 @@ describe('UseKeyModal', () => {
           .map((code) => code.text())
           .find((content) => content.includes('model_provider = "OpenAI"'))!
         expect(fileConfig).toContain('model_catalog_json = "~/.codex/codex-models.json"')
+        expect(fileConfig.split('\n[')[0]).toContain('service_tier = "fast"')
         expect(fileConfig).not.toContain('model_catalog_url')
         expect(fileConfig).not.toContain('api_key_model_discovery')
         expect(fileConfig.indexOf('model_catalog_json')).toBeLessThan(fileConfig.indexOf('[model_providers.OpenAI]'))

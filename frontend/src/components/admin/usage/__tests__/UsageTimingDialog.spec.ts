@@ -59,12 +59,15 @@ describe('Usage timing details', () => {
       downstream_write_ms: 1, downstream_error: false, client_disconnect: false, canceled: false,
       outcome: 'success', terminal: 'completed', events: { first_visible: 40000, first_semantic: 40000 },
       spans: [{ name: 'handler', start_ms: 0, end_ms: 50000 }, { name: 'user_queue', start_ms: 0, end_ms: 6000 }],
+      latency: { version: 1, status: 'measured', account_switches: 1, same_account_retries: 0, unknown_transitions: 0, large_body: true, cost_status: 'not_collected', extra_upload_component_ms: 100, extra_wait_component_ms: 200, attempts: [] },
       attempts: [{ kind: 'egress', number: 1, cleanup_canceled: true, account_id: 1, proxy_id: 0, start_ms: 6000, end_ms: 50000, status: 200, reused: false, body_eof: false, request_bytes: 20, response_bytes: 100, events: { response_headers: 10000 } }]
     }] })
     const wrapper = mount(UsageTimingDialog, { props: { record: { ...row(1), output_tokens: 1_095, duration_ms: 9_250, first_token_ms: 9_240 } }, ...options })
     await flushPromises()
     expect(wrapper.text()).toContain('usage.latencyTps 118 t/s')
     expect(wrapper.text()).toContain('requestTiming.tpsNote')
+    expect(wrapper.find('[data-testid="attempt-latency"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('latencyObservability.title')
     expect(wrapper.text()).toContain('requestTiming.health.firstSlow')
     expect(wrapper.text()).toContain('requestTiming.health.largest')
     expect(wrapper.text()).toContain('requestTiming.health.normalClose')
@@ -112,4 +115,88 @@ it('shows encoding and boundary gaps while leaving absent pre-decode data unknow
   expect(field('sse_wait')).toContain('200')
   expect(field('tool_wait')).toContain('2.00s')
   wrapper.unmount()
+})
+
+it('PR610 shows separately sampled server totals when legacy passthrough already includes queue', async () => {
+  mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
+  const record = { ...row(610), first_token_ms: 32_000, duration_ms: 50_000, queue_wait_ms: 30_000,
+    queue_timing: { status: 'measured', source: 'ws_frame_passthrough', scope: 'accepted_frame_including_admission', queue_clamped: false,
+      server_first_token_ms: 32_000, server_duration_ms: 50_000, forward_first_token_ms: 2_000, forward_duration_ms: 20_000 } }
+  const wrapper = mount(UsageTimingDialog, { props: { record }, ...options })
+  await flushPromises()
+  expect(wrapper.text()).toContain('requestTiming.serverFirst')
+  expect(wrapper.text()).toContain('32.00s')
+  expect(wrapper.text()).not.toContain('62.00s')
+  wrapper.unmount()
+})
+
+it('omits old queue values while preserving unknown server measurements in details', async () => {
+  mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
+  const wrapper = mount(UsageTimingDialog, { props: { record: { ...row(610), queue_wait_ms: 5_000 } }, ...options })
+  await flushPromises()
+  const serverFirst = wrapper.findAll('div').find(n => n.element.children.length === 2 && n.element.children[0]?.textContent === 'requestTiming.serverFirst')
+  expect(serverFirst?.text()).toContain('requestTiming.missing')
+  expect(wrapper.text()).not.toContain('5.00s')
+  wrapper.unmount()
+})
+
+it('keeps final-egress content values separate from failed attempts and the selected detailed trace', async () => {
+  const trace = (traceId: string, first: number) => ({
+    trace_id: traceId, started_at: '2026-11-06', total_ms: 1_000, status: 200,
+    body_bytes: 0, body_complete: true, body_read_ms: 0, downstream_bytes: 100,
+    downstream_write_ms: 1, events: { first_sse_event_flush: first, first_semantic: first }, spans: [],
+    attempts: [{ kind: 'http', number: 1, account_id: 1, proxy_id: 0, start_ms: 0, end_ms: 1_000,
+      status: 200, reused: true, body_eof: true,
+      events: { first_sse_event_flush: first, first_semantic: first, first_reasoning: first, first_visible_text: first } }],
+  })
+  mocks.get.mockResolvedValue({ retention_days: 30, traces: [trace('latest', 5), trace('earlier', 50)] })
+  const wrapper = mount(UsageTimingDialog, {
+    props: { record: { ...row(1), stream: true, first_token_ms: 300, content_timing: {
+      sse_event_first_ms: 100, semantic_first_ms: 300, reasoning_first_ms: 305, visible_text_first_ms: 800,
+      response_byte_first_ms: null, status: 'observed', source: 'host_websocket_body_parser',
+      scope: 'final_egress_attempt_offsets_from_application_entry', reasoning_streaming_capability: 'unknown', capability_source: 'none',
+    } } },
+    ...options,
+  })
+  try {
+    await flushPromises()
+    const content = () => wrapper.get('[data-testid="final-content-timing"]')
+    expect(content().text()).toContain('requestTiming.contentOrigin')
+    expect(content().text()).toContain('requestTiming.contentTraceScope')
+    expect(wrapper.get('[data-testid="final-content-event"]').text()).toContain('100ms')
+    expect(wrapper.get('[data-testid="final-content-semantic"]').text()).toContain('300ms')
+    expect(wrapper.get('[data-testid="final-content-reasoning"]').text()).toContain('305ms')
+    expect(wrapper.get('[data-testid="final-content-text"]').text()).toContain('800ms')
+    const before = content().text()
+    await wrapper.get('select').setValue(1)
+    expect(content().text()).toBe(before)
+    await wrapper.setProps({ record: { ...row(1), stream: true } })
+    for (const key of ['event', 'semantic', 'reasoning', 'text']) {
+      expect(wrapper.get(`[data-testid="final-content-${key}"]`).text()).toContain('—')
+    }
+    await wrapper.setProps({ record: { ...row(1), stream: false } })
+    expect(wrapper.find('[data-testid="final-content-timing"]').exists()).toBe(false)
+  } finally {
+    wrapper.unmount()
+  }
+})
+
+it('leaves invalid final-content timings unknown instead of displaying negative or non-finite values', async () => {
+  mocks.get.mockResolvedValue({ traces: [], retention_days: 30 })
+  const wrapper = mount(UsageTimingDialog, {
+    props: { record: { ...row(1), stream: true, content_timing: {
+      sse_event_first_ms: -1, semantic_first_ms: Number.NaN, reasoning_first_ms: Number.POSITIVE_INFINITY,
+      visible_text_first_ms: null, response_byte_first_ms: null, status: 'partial', source: 'fixture',
+      scope: 'final_egress_attempt_offsets_from_application_entry', reasoning_streaming_capability: 'unknown', capability_source: 'none',
+    } } },
+    ...options,
+  })
+  try {
+    await flushPromises()
+    for (const key of ['event', 'semantic', 'reasoning', 'text']) {
+      expect(wrapper.get(`[data-testid="final-content-${key}"] dd`).text()).toBe('—')
+    }
+  } finally {
+    wrapper.unmount()
+  }
 })

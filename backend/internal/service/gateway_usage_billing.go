@@ -19,6 +19,9 @@ func (s *GatewayService) getUserGroupRateMultiplier(ctx context.Context, userID,
 	}
 	resolver := s.userGroupRateResolver
 	if resolver == nil {
+		if s.userGroupRateRepo == nil && s.userGroupRateCache == nil {
+			return groupDefaultMultiplier
+		}
 		resolver = newUserGroupRateResolver(
 			s.userGroupRateRepo,
 			s.userGroupRateCache,
@@ -499,7 +502,7 @@ func syncBalanceCacheAfterDeduction(ctx context.Context, p *postUsageBillingPara
 	if p == nil || p.Cost == nil || p.User == nil || deps == nil || deps.billingCacheService == nil {
 		return
 	}
-	if result != nil && result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance) {
+	if result != nil && (result.AutoCreditIssued || result.NewBalance != nil && deps.billingCacheService.balanceBelowEligibilityThreshold(*result.NewBalance)) {
 		if err := deps.billingCacheService.InvalidateUserBalance(ctx, p.User.ID); err != nil {
 			slog.Warn("invalidate balance cache after exhausted deduction failed",
 				"user_id", p.User.ID,
@@ -824,6 +827,10 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 	ApplyForwardImageBillingResolution(result)
 	logServiceTierBillingDowngrade("service.gateway", account, result.RequestID, ApplyForwardServiceTierBillingResolution(result))
 
+	// 仅在管理员开启估算扣减且本次补入身份句时扣减用量。
+	// 放在强制缓存计费之前，按模型和上游汇总用量估算。
+	deductClaudeCodeMimicUsage(result)
+
 	// 强制缓存计费：将 input_tokens 转为 cache_read_input_tokens
 	// 用于粘性会话切换时的特殊计费处理
 	if input.ForceCacheBilling && result.Usage.InputTokens > 0 {
@@ -863,12 +870,19 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 
 	// 确定计费模型
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
+	requestedBillingModel := input.OriginalModel
+	if input.APIKeyMappedModel != "" {
+		requestedBillingModel = input.APIKeyMappedModel
+	}
 	billingModel := concreteBillingModel
 	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" {
 		billingModel = input.ChannelMappedModel
+		if !input.ChannelMappingApplied && billingModel == input.OriginalModel {
+			billingModel = requestedBillingModel
+		}
 	}
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
-		billingModel = input.OriginalModel
+		billingModel = requestedBillingModel
 	}
 	// composite 分组的公开别名（如 all/claude）会经 OriginalModel/ChannelMappedModel
 	// 进入上面的来源覆盖：任意别名查无价会静默落 $0，含家族词的别名则被价格表的
@@ -1017,12 +1031,19 @@ func (s *GatewayService) recordUsageMultipliers(ctx context.Context, apiKey *API
 // recordUsageBillingModel 按计费模型来源、composite 规则与无价兜底确定计费模型。
 func (s *GatewayService) recordUsageBillingModel(ctx context.Context, apiKey *APIKey, result *ForwardResult, fields ChannelUsageFields) string {
 	concreteBillingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
+	requestedBillingModel := fields.OriginalModel
+	if fields.APIKeyMappedModel != "" {
+		requestedBillingModel = fields.APIKeyMappedModel
+	}
 	billingModel := concreteBillingModel
 	if fields.BillingModelSource == BillingModelSourceChannelMapped && fields.ChannelMappedModel != "" {
 		billingModel = fields.ChannelMappedModel
+		if !fields.ChannelMappingApplied && billingModel == fields.OriginalModel {
+			billingModel = requestedBillingModel
+		}
 	}
 	if fields.BillingModelSource == BillingModelSourceRequested && fields.OriginalModel != "" {
-		billingModel = fields.OriginalModel
+		billingModel = requestedBillingModel
 	}
 	// composite 分组的公开别名（如 all/claude）会经 OriginalModel/ChannelMappedModel
 	// 进入上面的来源覆盖：任意别名查无价会静默落 $0，含家族词的别名则被价格表的
@@ -1415,6 +1436,7 @@ func (s *GatewayService) buildRecordUsageLog(
 		)
 	}
 	usageLog := &UsageLog{
+		Platform:                 account.Platform,
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,

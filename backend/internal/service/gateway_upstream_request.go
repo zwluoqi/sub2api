@@ -66,7 +66,7 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 			if err != nil {
 				return nil, nil, err
 			}
-			targetURL = validatedURL + "/v1/messages?beta=true"
+			targetURL = buildAnthropicMessagesURL(validatedURL)
 		}
 	} else if account.IsCustomBaseURLEnabled() {
 		customURL := account.GetCustomBaseURL()
@@ -141,6 +141,17 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	if stripClaudeCodeIdentity {
 		body = stripAnthropicClaudeCodeIdentityFromBody(body)
 	}
+
+	// Anthropic API Key「模拟 Claude Code」：只补缺的特征，记录身份句供可选估算扣减使用。
+	mimicAPIKeyClaudeCode := account != nil && account.IsAnthropicMimicClaudeCodeEnabled()
+	var mimicInjection claudeCodeMimicInjection
+	if mimicAPIKeyClaudeCode {
+		body, mimicInjection = mimicAnthropicClaudeCodeBody(body, account, claudeCodeMimicAPIKeyID(c), mimicUserAgent, modelID)
+	}
+	if account != nil {
+		mimicInjection.AccountID = account.ID
+	}
+	setClaudeCodeMimicInjection(c, mimicInjection)
 
 	policyFilterSet := s.getBetaPolicyFilterSet(ctx, c, account, modelID)
 	effectiveDropSet := mergeDropSets(policyFilterSet)
@@ -242,6 +253,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 	if stripClaudeCodeIdentity {
 		stripAnthropicClaudeCodeIdentityFromHeaders(req.Header)
 	}
+	if mimicAPIKeyClaudeCode {
+		applyAnthropicClaudeCodeMimicHeaders(req.Header, mimicUserAgent)
+	}
 
 	// 账号级请求头覆写（仅 anthropic/openai api_key 账号启用时生效；OAuth 路径 no-op）。
 	// 放在所有 header 逻辑之后，确保配置值对同名头拥有最终决定权。
@@ -267,6 +281,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		logClaudeMimicDebug(req, body, account, tokenType, mimicClaudeCode)
 	}
 
+	if err := checkAPIKeyLongContextBeforeForward(ctx, c, s.billingService, body, modelID); err != nil {
+		return nil, nil, err
+	}
 	return req, body, nil
 }
 
@@ -402,6 +419,9 @@ func (s *GatewayService) buildUpstreamRequestAnthropicVertex(
 		"stream":     strconv.FormatBool(reqStream),
 	})
 
+	if err := checkAPIKeyLongContextBeforeForward(ctx, c, s.billingService, vertexBody, modelID); err != nil {
+		return nil, err
+	}
 	return req, nil
 }
 

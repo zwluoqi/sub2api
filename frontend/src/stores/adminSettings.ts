@@ -2,8 +2,10 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { adminAPI } from '@/api'
 import type { CustomMenuItem } from '@/types'
+import { DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS } from '@/constants/smartOpsMenu'
 
 export const useAdminSettingsStore = defineStore('adminSettings', () => {
+  const smartOpsHiddenMenuItems = ref<string[]>([...DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS])
   const requestCaptureEnabled = ref(false)
   const loaded = ref(false)
   const loading = ref(false)
@@ -69,6 +71,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
         adminAPI.settings.getSettings(),
         adminAPI.payment.getConfig()
       ])
+      smartOpsHiddenMenuItems.value = [...(settings.smart_ops_hidden_menu_items ?? DEFAULT_SMART_OPS_HIDDEN_MENU_ITEMS)]
       requestCaptureEnabled.value = settings.request_capture_enabled === true
       opsMonitoringEnabled.value = settings.ops_monitoring_enabled ?? true
       writeCachedBool('ops_monitoring_enabled_cached', opsMonitoringEnabled.value)
@@ -144,6 +147,7 @@ export const useAdminSettingsStore = defineStore('adminSettings', () => {
   function setRequestCaptureEnabledLocal(value: boolean) { requestCaptureEnabled.value = value }
 
   return {
+    smartOpsHiddenMenuItems,
     requestCaptureEnabled,
     setRequestCaptureEnabledLocal,
     loaded,

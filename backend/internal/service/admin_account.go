@@ -100,7 +100,8 @@ func cloneAccountJSONMap(value map[string]any) (map[string]any, error) {
 }
 
 var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
-	OpenAITwoFAAdmissionExtraKey: {},
+	OAuthDegradationActionExtraKey: {},
+	OpenAITwoFAAdmissionExtraKey:   {},
 	// A retry identity belongs to the operation that created one copy, not to later copies.
 	duplicateAccountOperationIDExtraKey: {},
 	// External sync identity belongs to one local account only.
@@ -433,8 +434,12 @@ func buildAccountForCreate(input *CreateAccountInput, accountExtra map[string]an
 		return nil, err
 	}
 	accountExtra = MergeOpenAICodexTicketExtra(accountExtra, nil)
-	if input.Platform == PlatformTypeSafe && input.Type != AccountTypeAPIKey {
-		return nil, errors.New("typesafe accounts only support apikey credentials")
+	delete(accountExtra, OAuthDegradationActionExtraKey)
+	if (input.Platform == PlatformTypeSafe || input.Platform == PlatformMistral || input.Platform == PlatformQwen) && input.Type != AccountTypeAPIKey {
+		return nil, fmt.Errorf("%s accounts only support apikey credentials", input.Platform)
+	}
+	if err := validateQwenCacheCredentials(input.Credentials); err != nil {
+		return nil, err
 	}
 	// Probe/session state is system-managed. New accounts always start with automatic refresh disabled.
 	delete(accountExtra, UpstreamBillingProbeEnabledExtraKey)
@@ -641,6 +646,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	// single/bulk switch APIs carry manual intent; an ordinary edit must neither
 	// overwrite a concurrently executed timer nor cancel plans via inherited intent.
 	ctx = accounttimer.WithPreservedSchedulable(accounttimer.WithoutManualIntent(ctx))
+	// An omitted status does not own authentication state. Explicit status edits
+	// override any inherited preservation marker just as scheduling intent does.
+	ctx = withAccountStatusPreservation(ctx, input.Status == "")
 	if err := ValidateAccountCostMultiplierExtra(input.Extra); err != nil {
 		return nil, err
 	}
@@ -651,8 +659,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 	if err != nil {
 		return nil, err
 	}
-	if account.Platform == PlatformTypeSafe && input.Type != "" && input.Type != AccountTypeAPIKey {
-		return nil, errors.New("typesafe accounts only support apikey credentials")
+	if (account.Platform == PlatformTypeSafe || account.Platform == PlatformMistral || account.Platform == PlatformQwen) && input.Type != "" && input.Type != AccountTypeAPIKey {
+		return nil, fmt.Errorf("%s accounts only support apikey credentials", account.Platform)
 	}
 	var normalizedExtra map[string]any
 	if input.Extra != nil {
@@ -726,6 +734,9 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// 敏感子键采用"incoming 没提供就保留"的合并语义：前端响应已脱敏，
 		// 全对象 PUT 编辑时不会再带回 token，避免覆盖时清空已有凭证。
 		account.Credentials = MergePreservingSensitiveCreds(account.Credentials, input.Credentials)
+		if err := validateQwenCacheCredentials(account.Credentials); err != nil {
+			return nil, err
+		}
 		if err := ValidateModelMappingMode(account.Credentials); err != nil {
 			return nil, err
 		}
@@ -767,6 +778,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		// 目录观察和能力 metadata 只由同步写入。表单里的旧值或注入值不能进入本次更新。
 		delete(normalizedExtra, grokObservedModelsExtraKey)
 		delete(normalizedExtra, UpstreamModelMetadataExtraKey)
+		delete(normalizedExtra, UpstreamModelSyncExtraKey)
 		// 保留配额用量和专用服务受管字段，防止普通账号编辑意外覆盖。
 		for _, key := range []string{
 			"quota_used",
@@ -777,6 +789,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 			grokBillingExtraKey,
 			grokObservedModelsExtraKey,
 			UpstreamModelMetadataExtraKey,
+			UpstreamModelSyncExtraKey,
 			UpstreamBillingProbeEnabledExtraKey,
 			UpstreamBillingRateSyncEnabledExtraKey,
 			UpstreamBillingProbeExtraKey,
@@ -1045,6 +1058,7 @@ func (s *adminServiceImpl) UpdateAccountExtra(ctx context.Context, id int64, upd
 	// Dedicated quality restore/runtime paths use their own transaction/UpdateExtra.
 	updates = maps.Clone(updates)
 	delete(updates, QualityModelIsolationKey)
+	delete(updates, OAuthDegradationActionExtraKey)
 	if err := ValidateAccountCostMultiplierExtra(updates); err != nil {
 		return err
 	}
@@ -1106,6 +1120,7 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	input.Extra = sanitizedCodexFingerprintExtraUpdates(input.Extra)
 	input.Extra = stripOpenAIAutoResetCreditManagedExtra(input.Extra, true)
 	delete(input.Extra, OpenAITwoFAAdmissionExtraKey)
+	delete(input.Extra, OAuthDegradationActionExtraKey)
 	delete(input.Extra, UpstreamBillingProbeEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingRateSyncEnabledExtraKey)
 	delete(input.Extra, UpstreamBillingProbeExtraKey)
@@ -1319,6 +1334,13 @@ func (s *adminServiceImpl) BulkUpdateAccounts(ctx context.Context, input *BulkUp
 	// Bulk may mix platforms; always drop ephemeral SSO/password keys (cookie
 	// only when platform is known Grok — empty platform still strips password/*).
 	if input.Credentials != nil {
+		_, changesMapping := input.Credentials["model_mapping"]
+		_, changesCompact := input.Credentials["compact_model_mapping"]
+		_, changesMode := input.Credentials[OpenAIModelMappingModeKey]
+		if (changesMapping || changesCompact || changesMode) && slices.ContainsFunc(cachedTargets, func(a *Account) bool { return a.hasOAuthInitialModelSelection() }) {
+			input.Credentials = maps.Clone(input.Credentials)
+			input.Credentials[OAuthInitialModelSelectionKey] = nil
+		}
 		input.Credentials = SanitizeStoredCredentials("", input.Credentials)
 	}
 

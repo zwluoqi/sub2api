@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/imageeditcompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
@@ -642,6 +643,7 @@ func (s *OpenAIGatewayService) ForwardImages(
 	if account.IsSIWCEnabled() {
 		return nil, fmt.Errorf("SIWC does not support image generation; select Codex for this account")
 	}
+	ctx = s.withOpenAIImageResponseHeaderTimeout(ctx, c)
 	switch account.Type {
 	case AccountTypeAPIKey:
 		return s.forwardOpenAIImagesAPIKey(ctx, c, account, body, parsed, channelMappedModel)
@@ -650,6 +652,23 @@ func (s *OpenAIGatewayService) ForwardImages(
 	default:
 		return nil, fmt.Errorf("unsupported account type: %s", account.Type)
 	}
+}
+
+// withOpenAIImageResponseHeaderTimeout applies the longer wait an admin chose
+// for this API key's group, keeping chat traffic on the global timeout.
+func (s *OpenAIGatewayService) withOpenAIImageResponseHeaderTimeout(ctx context.Context, c *gin.Context) context.Context {
+	if s == nil || s.settingService == nil || c == nil {
+		return ctx
+	}
+	value, ok := c.Get("api_key")
+	if !ok {
+		return ctx
+	}
+	apiKey, ok := value.(*APIKey)
+	if !ok || apiKey == nil {
+		return ctx
+	}
+	return WithHTTPUpstreamResponseHeaderTimeout(ctx, s.settingService.OpenAIImageResponseHeaderTimeout(ctx, apiKey.GroupID))
 }
 
 func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
@@ -690,6 +709,21 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	defer releaseUpstreamCtx()
 
+	if imageeditcompat.Enabled(account.GetOpenAIBaseURL(), parsed.Endpoint, account.ID, os.Getenv("SUB2API_IMAGE_EDIT_FORM_ACCOUNT_IDS")) {
+		forwardBody, forwardContentType, err = imageeditcompat.Convert(forwardBody, forwardContentType, func(ref string) ([]byte, error) {
+			encoded, fetchErr := s.fetchOpenAIImageURLBase64(ctx, account, ref)
+			if fetchErr != nil {
+				// Download errors may embed signed reference URLs. Do not expose
+				// them through the forwarding error log or client response.
+				return nil, fmt.Errorf("image reference download failed")
+			}
+			return base64.StdEncoding.DecodeString(encoded)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("image edit form compatibility: %w", err)
+		}
+	}
+
 	token, _, err := s.GetAccessToken(upstreamCtx, account)
 	if err != nil {
 		return nil, err
@@ -707,6 +741,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
+		if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, "", err); handled {
+			return nil, resetErr
+		}
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -781,6 +818,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
 		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil)
 		if err != nil {
+			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+				err = resetErr
+			}
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
 					RequestID:        resp.Header.Get("x-request-id"),
@@ -824,6 +864,9 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	} else {
 		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
 		if err != nil {
+			if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+				err = resetErr
+			}
 			return nil, err
 		}
 		usage = nonStreamUsage

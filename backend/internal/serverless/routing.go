@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
@@ -102,6 +104,39 @@ func routePath(r *http.Request) bool {
 	}
 	return r.Method == "POST" && (strings.HasSuffix(path, "/messages") || strings.HasSuffix(path, "/chat/completions"))
 }
+
+func (m *Manager) affinityKey(cfg Config, keyID int64, clientIP string) string {
+	if cfg.AffinityScope == AffinityKeyIP {
+		// Use only the validated client IP supplied by gateway middleware. Never
+		// store the raw IP or allow arbitrary malformed strings to grow the cache.
+		ip, err := netip.ParseAddr(clientIP)
+		normalized := "unknown"
+		if err == nil {
+			normalized = ip.Unmap().String()
+		}
+		return prefix + "affinity_ip:" + m.mac("key_ip", fmt.Sprint(keyID), normalized)
+	}
+	// Keep the original namespace for existing API Key bindings.
+	return prefix + "affinity:" + m.mac("key", fmt.Sprint(keyID))
+}
+
+// Compare the exact binding before moving it. A concurrent request may already
+// have made the same move; it must never overwrite a different/newer binding.
+const fallbackBindingScript = `
+local current=redis.call('GET',KEYS[1])
+if current~=ARGV[1] and current~=ARGV[2] then return 0 end
+redis.call('SET',KEYS[1],ARGV[2],'EX',ARGV[3])
+return 1`
+
+func (m *Manager) bindPrimary(ctx context.Context, key, previous, country string) bool {
+	encoded, err := json.Marshal(Binding{ID: "primary", Country: country})
+	if err != nil {
+		return false
+	}
+	result, err := m.redis.Eval(ctx, fallbackBindingScript, []string{key}, previous, string(encoded), int(affinityTTL/time.Second)).Int()
+	return err == nil && result == 1
+}
+
 func (m *Manager) Route(c *gin.Context, keyID int64, clientIP string) {
 	if m.runtime.Gateway || keyID <= 0 || !routePath(c.Request) {
 		c.Next()
@@ -127,7 +162,7 @@ func (m *Manager) Route(c *gin.Context, keyID int64, clientIP string) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 4*time.Second)
 	defer cancel()
 	country := ""
-	key := prefix + "affinity:" + m.mac("key", fmt.Sprint(keyID))
+	key := m.affinityKey(cfg, keyID, clientIP)
 	raw, err := m.redis.Get(ctx, key).Result()
 	reason := "binding"
 	var b Binding
@@ -182,6 +217,7 @@ func (m *Manager) Route(c *gin.Context, keyID int64, clientIP string) {
 		}
 		b.Country = country
 		encoded, _ := json.Marshal(b)
+		raw = string(encoded)
 		won, e := m.redis.SetNX(ctx, key, encoded, affinityTTL).Result()
 		if e != nil {
 			failure(c, "Could not bind request to a Pod")
@@ -193,6 +229,7 @@ func (m *Manager) Route(c *gin.Context, keyID int64, clientIP string) {
 				failure(c, "Pod binding unavailable")
 				return
 			}
+			raw = value
 			reason = "binding"
 		}
 	}
@@ -222,6 +259,14 @@ func (m *Manager) Route(c *gin.Context, keyID int64, clientIP string) {
 		}
 	}
 	if target == nil || !m.Probe(ctx, *target) {
+		// This decision runs before forwarding any business request. Failures
+		// after forward() starts are never replayed on the primary.
+		if cfg.FallbackToPrimary && m.bindPrimary(ctx, key, raw, country) {
+			c.Header("X-Sub2api-Pod", "primary")
+			c.Next()
+			m.Record(c.Request.Context(), "primary", country, "binding_fallback", c.Writer.Status())
+			return
+		}
 		m.Record(c.Request.Context(), b.ID, country, "binding_unavailable", 503)
 		failure(c, "Bound Pod unavailable; the existing conversation was not moved")
 		return
@@ -238,6 +283,7 @@ func approved(cfg Config, p Pod, newBinding bool) bool {
 	return false
 }
 func (m *Manager) forward(c *gin.Context, p Pod, clientIP string) {
+	started := time.Now()
 	target, err := url.Parse(p.Endpoint)
 	if err != nil {
 		failure(c, "Invalid Pod endpoint")
@@ -249,6 +295,9 @@ func (m *Manager) forward(c *gin.Context, p Pod, clientIP string) {
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(target)
 			r.Out.Host = r.In.Host // Preserve public origin for generated capability URLs.
+			if requestID, _ := r.In.Context().Value(ctxkey.RequestID).(string); requestID != "" {
+				r.Out.Header.Set("X-Request-ID", requestID)
+			}
 			r.Out.Header.Del("Forwarded")
 			r.Out.Header.Del("X-Forwarded-For")
 			r.Out.Header.Del("X-Real-IP")
@@ -261,7 +310,20 @@ func (m *Manager) forward(c *gin.Context, p Pod, clientIP string) {
 			r.Out.Header.Set(forwardHeader, string(encoded))
 		},
 		ModifyResponse: func(r *http.Response) error { r.Header.Set("X-Sub2api-Pod", p.ID); return nil },
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			// Raw transport errors may contain capability URLs or credentials.
+			requestID, _ := r.Context().Value(ctxkey.RequestID).(string)
+			clientRequestID, _ := r.Context().Value(ctxkey.ClientRequestID).(string)
+			m.logger.WarnContext(r.Context(), "serverless.forward_failed",
+				slog.String("component", "serverless"),
+				slog.String("request_id", requestID),
+				slog.String("client_request_id", clientRequestID),
+				slog.String("pod_id", p.ID),
+				slog.String("error_kind", forwardErrorKind(err)),
+				slog.String("error_type", fmt.Sprintf("%T", err)),
+				slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+				slog.Int64("response_header_timeout_ms", m.transport.ResponseHeaderTimeout.Milliseconds()),
+			)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(503)
 			_, _ = w.Write([]byte("{\"error\":{\"type\":\"serverless_unavailable\",\"message\":\"Pod transfer failed; request was not retried\"}}"))

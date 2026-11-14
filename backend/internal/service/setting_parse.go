@@ -217,10 +217,12 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// Grok compatibility defaults: cross-client mapping stays enabled unless
 		// operators explicitly disable it.
-		SettingKeyGrokDefaultTextModel:           "grok-4.6",
-		SettingKeyGrokCrossClientModelMapEnabled: "true",
-		SettingKeyGrokDefaultBaseURLMode:         GrokDefaultBaseURLModeCLI,
-		SettingKeyGrokVideoSourceURLEnabled:      "false",
+		SettingKeyGrokDefaultTextModel:                 "grok-4.6",
+		SettingKeyGrokCrossClientModelMapEnabled:       "true",
+		SettingKeyGrokDefaultBaseURLMode:               GrokDefaultBaseURLModeCLI,
+		SettingKeyGrokVideoSourceURLEnabled:            "false",
+		SettingKeyOpenAI409OmitEncryptedHistoryEnabled: "false",
+		SettingKeyOpenAI400OmitEncryptedHistoryEnabled: "false",
 
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
@@ -239,6 +241,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 
 		// Support tickets (default disabled; opt-in). A missing config means the defaults.
 		SettingKeySupportTicketEnabled: "false",
+		SettingKeyLotteryEnabled:       "false",
 
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled:              "false",
@@ -888,6 +891,8 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.GrokCrossClientModelMapEnabled = !isFalseSettingValue(settings[SettingKeyGrokCrossClientModelMapEnabled])
 	result.GrokDefaultBaseURLMode = normalizeGrokDefaultBaseURLMode(settings[SettingKeyGrokDefaultBaseURLMode])
 	result.GrokVideoSourceURLEnabled = settings[SettingKeyGrokVideoSourceURLEnabled] == "true"
+	result.OpenAI409OmitEncryptedHistoryEnabled = settings[SettingKeyOpenAI409OmitEncryptedHistoryEnabled] == "true"
+	result.OpenAI400OmitEncryptedHistoryEnabled = settings[SettingKeyOpenAI400OmitEncryptedHistoryEnabled] == "true"
 
 	// Available channels feature (default: disabled; strict true)
 	result.AvailableChannelsEnabled = settings[SettingKeyAvailableChannelsEnabled] == "true"
@@ -1073,6 +1078,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.OpenAIAdvancedSchedulerEffectiveWeightSessionSticky = formatOpenAIAdvancedSchedulerFloat(effectiveWeights.SessionSticky)
 
 	// 余额、订阅到期与账号限额通知
+	parseBalanceForecastSettings(settings, result)
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		result.BalanceLowNotifyThreshold = v
@@ -1112,6 +1118,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.UsageShowCacheRate = settings[SettingKeyUsageShowCacheRate] != "false"                                      // 默认开启
 	result.UsageShowCacheRateToUsers = settings[SettingKeyUsageShowCacheRateToUsers] == "true"                         // 默认不向用户展示
 	result.UsageShowUpstreamResponseModelToUsers = settings[SettingKeyUsageShowUpstreamResponseModelToUsers] == "true" // 默认不向用户展示
+	result.SmartOpsHiddenMenuItems = parseSmartOpsHiddenMenuItems(settings[SettingKeySmartOpsHiddenMenuItems])
 	result.RequestCaptureEnabled = settings[SettingKeyRequestCaptureEnabled] == "true"
 	result.RequestCaptureQuotaMiB, _ = strconv.ParseInt(settings[SettingKeyRequestCaptureQuotaMiB], 10, 64)
 	if result.RequestCaptureQuotaMiB <= 0 {

@@ -137,11 +137,12 @@ func (r ChannelMappingResult) ToUsageFields(reqModel, upstreamModel string) Chan
 		channelMappedModel = r.MappedModel
 	}
 	return ChannelUsageFields{
-		ChannelID:          r.ChannelID,
-		OriginalModel:      reqModel,
-		ChannelMappedModel: channelMappedModel,
-		BillingModelSource: r.BillingModelSource,
-		ModelMappingChain:  r.BuildModelMappingChain(reqModel, upstreamModel),
+		ChannelID:             r.ChannelID,
+		OriginalModel:         reqModel,
+		ChannelMappedModel:    channelMappedModel,
+		ChannelMappingApplied: r.Mapped,
+		BillingModelSource:    r.BillingModelSource,
+		ModelMappingChain:     r.BuildModelMappingChain(reqModel, upstreamModel),
 	}
 }
 
@@ -787,6 +788,7 @@ func checkPricesNotNegative(p ChannelModelPricing) error {
 		{"output_price", p.OutputPrice},
 		{"cache_write_price", p.CacheWritePrice},
 		{"cache_write_1h_price", p.CacheWrite1hPrice},
+		{"cache_write_12h_price", p.CacheWrite12hPrice},
 		{"cache_read_price", p.CacheReadPrice},
 		{"image_input_price", p.ImageInputPrice},
 		{"image_output_price", p.ImageOutputPrice},
@@ -814,7 +816,7 @@ func checkPricesNotNegative(p ChannelModelPricing) error {
 func checkIntervalsHavePrices(p ChannelModelPricing) error {
 	for _, iv := range p.Intervals {
 		if iv.InputPrice == nil && iv.OutputPrice == nil &&
-			iv.CacheWritePrice == nil && iv.CacheWrite1hPrice == nil && iv.CacheReadPrice == nil &&
+			iv.CacheWritePrice == nil && iv.CacheWrite1hPrice == nil && iv.CacheWrite12hPrice == nil && iv.CacheReadPrice == nil &&
 			iv.PerRequestPrice == nil && iv.InputMultiplier == nil &&
 			iv.OutputMultiplier == nil && iv.CacheWriteMultiplier == nil &&
 			iv.CacheReadMultiplier == nil {

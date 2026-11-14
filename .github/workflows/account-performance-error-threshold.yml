@@ -1,0 +1,73 @@
+name: Account performance HTTP error thresholds
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Bounds, real HTTP evidence, evaluation and pause ownership
+        working-directory: backend
+        run: go test -race -tags=unit ./internal/service ./internal/repository -run '^TestAccountPerformance' -count=1 -v -timeout=10m
+      - name: Bounded process-local HTTP collector
+        working-directory: backend
+        run: go test -race ./internal/pkg/upstreamstats -count=1 -v -timeout=2m
+      - name: Migrated PostgreSQL pause evidence and configuration
+        working-directory: backend
+        env:
+          CI: 'true'
+        run: go test -tags=integration ./internal/repository -run '^TestAccountPerformance' -count=1 -v -timeout=10m
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm --dir frontend install --frozen-lockfile
+      - name: Error bounds, legacy payloads and new feature notice behavior
+        working-directory: frontend
+        run: pnpm exec vitest run src/components/account/__tests__/AccountPerformanceDialog.spec.ts src/components/account/__tests__/AccountPerformanceCell.spec.ts src/api/__tests__/admin.accounts.performance.spec.ts src/components/account/__tests__/AccountUpstreamErrorNotice.spec.ts
+      - name: Typecheck and production bundle
+        run: pnpm --dir frontend run build
+
+      - name: Install isolated screenshot browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/cache-browser" --no-save --ignore-scripts playwright@1.56.1
+          "$RUNNER_TEMP/cache-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Render performance column before and after with synthetic metrics
+        env:
+          PLAYWRIGHT_ROOT: ${{ runner.temp }}/cache-browser/node_modules/playwright
+          SCREENSHOT_DIR: ${{ runner.temp }}/account-cache-ui
+          SOURCE_BASE: ${{ github.event.pull_request.base.sha || '11f250894eab310cbd4508946c44c9e2a3a2eb48' }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$SOURCE_BASE"
+          node .github/scripts/account-performance-cache-screenshot.mjs
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: account-cache-ui-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/account-cache-ui/*.png
+            ${{ runner.temp }}/account-cache-ui/manifest.json

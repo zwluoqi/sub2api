@@ -8,9 +8,15 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const SettingKey = "serverless_routing_v1"
+
+const (
+	AffinityAPIKey = "api_key"
+	AffinityKeyIP  = "api_key_ip"
+)
 
 var identifier = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
 var countryCode = regexp.MustCompile("^[A-Z]{2}$")
@@ -25,10 +31,12 @@ type Region struct {
 	PodIDs  []string `json:"pod_ids"`
 }
 type Config struct {
-	Established bool        `json:"established"`
-	Enabled     bool        `json:"enabled"`
-	Pods        []PodPolicy `json:"pods"`
-	Regions     []Region    `json:"regions"`
+	Established       bool        `json:"established"`
+	Enabled           bool        `json:"enabled"`
+	AffinityScope     string      `json:"affinity_scope,omitempty"`
+	FallbackToPrimary bool        `json:"fallback_to_primary,omitempty"`
+	Pods              []PodPolicy `json:"pods"`
+	Regions           []Region    `json:"regions"`
 }
 type Store interface {
 	Load(context.Context) (Config, error)
@@ -37,12 +45,13 @@ type Store interface {
 
 // Runtime values come from trusted process configuration, never a public form.
 type Runtime struct {
-	ID       string
-	Endpoint string
-	Region   string
-	Secret   string
-	Version  string
-	Gateway  bool
+	ID                    string
+	Endpoint              string
+	Region                string
+	Secret                string
+	Version               string
+	Gateway               bool
+	ResponseHeaderTimeout time.Duration
 }
 
 func ValidateEndpoint(raw string) error {
@@ -60,6 +69,9 @@ func ValidateEndpoint(raw string) error {
 	return nil
 }
 func Validate(c Config) error {
+	if c.AffinityScope != "" && c.AffinityScope != AffinityAPIKey && c.AffinityScope != AffinityKeyIP {
+		return errors.New("affinity_scope must be api_key or api_key_ip")
+	}
 	if len(c.Pods) > 128 || len(c.Regions) > 64 {
 		return errors.New("maximum 128 Pods and 64 regions")
 	}
@@ -93,6 +105,9 @@ func Validate(c Config) error {
 	return nil
 }
 func ValidateRuntime(r Runtime) error {
+	if r.ResponseHeaderTimeout < 0 || r.ResponseHeaderTimeout > 24*time.Hour {
+		return errors.New("runtime.serverless_response_header_timeout must be between 0 and 86400 seconds")
+	}
 	if r.Secret != "" && len(r.Secret) < 32 {
 		return errors.New("serverless cluster secret must be at least 32 bytes")
 	}

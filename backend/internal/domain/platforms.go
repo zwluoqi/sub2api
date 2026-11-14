@@ -48,6 +48,9 @@ var platformList = []PlatformSpec{
 	{ID: PlatformTypeSafe, DisplayName: "TypeSafe / Jev", Gateway: PlatformGatewayAnthropic, LiteLLMProvider: "typesafe"},
 	{ID: PlatformCommandCode, DisplayName: "Command Code", Gateway: PlatformGatewayOpenAI},
 	{ID: PlatformCline, DisplayName: "Cline", Gateway: PlatformGatewayOpenAI},
+	{ID: PlatformMistral, DisplayName: "Mistral", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "mistral"},
+	// Qwen uses compatible inference, without a balance/Coding Plan probe.
+	{ID: PlatformQwen, DisplayName: "Qwen", Gateway: PlatformGatewayOpenAI, LiteLLMProvider: "dashscope"},
 }
 
 var platformIndex = func() map[string]int {

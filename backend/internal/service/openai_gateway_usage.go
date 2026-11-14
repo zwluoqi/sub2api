@@ -120,7 +120,7 @@ func (s *OpenAIGatewayService) ResolveUserGroupRateMultiplier(ctx context.Contex
 	}
 	resolver := s.userGroupRateResolver
 	if resolver == nil {
-		resolver = newUserGroupRateResolver(nil, nil, resolveUserGroupRateCacheTTL(s.cfg), nil, "service.openai_gateway")
+		return groupDefaultMultiplier
 	}
 	return resolver.Resolve(ctx, userID, groupID, groupDefaultMultiplier)
 }
@@ -190,10 +190,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	// OpenAI input_tokens 是总输入，包含缓存读取和缓存写入明细。
 	// 将三类 token 拆成互斥桶，避免缓存写入同时按普通输入和 cache_write 重复计费。
 	cacheCreationTokens := result.Usage.CacheCreationInputTokens
-	if account.IsExcelBPSCacheCreationAsInputEnabled() && result.UpstreamEndpoint == "/basispoints/api/responses" {
+	cache30m, cache12h := result.Usage.CacheCreation30mInputTokens, result.Usage.CacheCreation12hInputTokens
+	if excelBPSCacheCreationBilledAsInput(account, result) {
 		// Total input already includes cache creation. Retain those tokens in the
 		// ordinary input bucket without changing the original upstream usage.
 		cacheCreationTokens = 0
+		cache30m, cache12h = 0, 0
 	}
 	actualInputTokens := result.Usage.InputTokens - result.Usage.CacheReadInputTokens - cacheCreationTokens
 	if actualInputTokens < 0 {
@@ -202,13 +204,15 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 
 	// Calculate cost
 	tokens := UsageTokens{
-		InputTokens:          actualInputTokens,
-		ImageInputTokens:     max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
-		ImageCacheReadTokens: result.Usage.ImageCacheReadTokens,
-		OutputTokens:         result.Usage.OutputTokens,
-		CacheCreationTokens:  cacheCreationTokens,
-		CacheReadTokens:      result.Usage.CacheReadInputTokens,
-		ImageOutputTokens:    result.Usage.ImageOutputTokens,
+		InputTokens:            actualInputTokens,
+		ImageInputTokens:       max(result.Usage.ImageInputTokens-result.Usage.ImageCacheReadTokens, 0),
+		ImageCacheReadTokens:   result.Usage.ImageCacheReadTokens,
+		OutputTokens:           result.Usage.OutputTokens,
+		CacheCreationTokens:    cacheCreationTokens,
+		CacheReadTokens:        result.Usage.CacheReadInputTokens,
+		ImageOutputTokens:      result.Usage.ImageOutputTokens,
+		CacheCreation30mTokens: cache30m,
+		CacheCreation12hTokens: cache12h,
 	}
 
 	// Keep candidate fallback, response-model selection and Free Fast on one policy snapshot.
@@ -238,23 +242,40 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	}
 
 	var cost *CostBreakdown
-	billingModel := forwardResultBillingModel(result.Model, result.UpstreamModel)
+	// Use the rewrite captured during forwarding, never current key settings:
+	// skipped endpoints and policy changes after admission retain their price.
+	requestedBillingModel := input.OriginalModel
+	if input.APIKeyMappedModel != "" {
+		requestedBillingModel = input.APIKeyMappedModel
+	}
+	channelBillingModel := input.ChannelMappedModel
+	if !input.ChannelMappingApplied && channelBillingModel == input.OriginalModel {
+		// An unchanged channel field is the audit alias, not an explicit price
+		// override. Do not resurrect its price when the key target is unpriced.
+		channelBillingModel = requestedBillingModel
+	}
+	resultBillingModel := result.Model
+	if !input.ChannelMappingApplied && result.Model == input.OriginalModel {
+		resultBillingModel = requestedBillingModel
+	}
+	billingModel := forwardResultBillingModel(resultBillingModel, result.UpstreamModel)
 	if result.BillingModel != "" {
 		billingModel = strings.TrimSpace(result.BillingModel)
 	}
-	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" && input.ChannelMappedModel != input.OriginalModel {
+	if input.BillingModelSource == BillingModelSourceChannelMapped && input.ChannelMappedModel != "" &&
+		((input.APIKeyMappedModel != "" && input.ChannelMappingApplied) || input.ChannelMappedModel != input.OriginalModel) {
 		billingModel = input.ChannelMappedModel
 	}
 	if input.BillingModelSource == BillingModelSourceRequested && input.OriginalModel != "" {
-		billingModel = input.OriginalModel
+		billingModel = requestedBillingModel
 	}
 	billingModels := usageBillingModelCandidates(
 		billingModel,
 		result.BillingModel,
-		input.ChannelMappedModel,
-		input.OriginalModel,
+		channelBillingModel,
+		requestedBillingModel,
 		result.UpstreamModel,
-		result.Model,
+		resultBillingModel,
 	)
 	billingModels = s.filterCNProviderBillingModelCandidates(ctx, account, apiKey, billingModels)
 	serviceTier := ""
@@ -360,7 +381,12 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		billingType = BillingTypeSubscription
 	}
 
-	// Create usage log
+	// Preserve protocol-specific legacy timers and the TPS denominator.
+	// QueueTiming supplies separately sampled server/forward observations.
+	queueWaitMs := 0
+	if result.QueueWait > 0 {
+		queueWaitMs = int(min(result.QueueWait, maxOpenAIQueueWait).Milliseconds())
+	}
 	durationMs := int(result.Duration.Milliseconds())
 	accountRateMultiplier := account.BillingRateMultiplier()
 	requestID := resolveUsageBillingRequestID(ctx, result.RequestID)
@@ -406,7 +432,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		// Keep the image cache split in the existing usage_logs JSONB payload.
 		imageSizeBreakdown["image_cache_read_tokens"] = result.Usage.ImageCacheReadTokens
 	}
+	if result.AuthConnectionID != "" && s.excelOAuthReauth != nil {
+		s.excelOAuthReauth.recordConnectionUsage(ctx, account.ID, apiKey.ID, result.AuthConnectionID, requestID)
+	}
 	usageLog := &UsageLog{
+		Platform:                 account.Platform,
 		UserID:                   user.ID,
 		APIKeyID:                 apiKey.ID,
 		AccountID:                account.ID,
@@ -425,6 +455,8 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		InputTokens:              actualInputTokens,
 		OutputTokens:             result.Usage.OutputTokens,
 		CacheCreationTokens:      cacheCreationTokens,
+		CacheCreation30mTokens:   cache30m,
+		CacheCreation12hTokens:   cache12h,
 		CacheReadTokens:          result.Usage.CacheReadInputTokens,
 		ImageInputTokens:         result.Usage.ImageInputTokens,
 		ImageOutputTokens:        result.Usage.ImageOutputTokens,
@@ -445,6 +477,14 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 		}
 		videoDurationSeconds := NormalizeVideoBillingDurationSecondsOrDefault(result.VideoDurationSeconds)
 		usageLog.VideoDurationSeconds = &videoDurationSeconds
+	}
+	if cost != nil && result.HeaderTimeoutRetries > 0 {
+		// A submitted header-timeout attempt may already have been billed by the
+		// upstream. Charge the caller one successful-request unit per retry and
+		// include the same amount in the account cost statistics.
+		factor := float64(1 + result.HeaderTimeoutRetries)
+		cost.TotalCost *= factor
+		cost.ActualCost *= factor
 	}
 	if cost != nil {
 		usageLog.InputCost = cost.InputCost
@@ -474,6 +514,10 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	usageLog.OpenAIWSMode = result.OpenAIWSMode
 	usageLog.DurationMs = &durationMs
 	usageLog.FirstTokenMs = result.FirstTokenMs
+	usageLog.QueueTiming = result.QueueTiming
+	if result.QueueWaitMeasured {
+		usageLog.QueueWaitMs = &queueWaitMs
+	}
 	usageLog.CreatedAt = time.Now()
 	// 设置渠道信息
 	usageLog.ChannelID = optionalInt64Ptr(input.ChannelID)
@@ -1049,7 +1093,7 @@ func ParseCodexRateLimitHeaders(headers http.Header) *OpenAICodexUsageSnapshot {
 	// Helper to parse float64 from header
 	parseFloat := func(key string) *float64 {
 		if v := headers.Get(key); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
 				return &f
 			}
 		}
@@ -1100,7 +1144,9 @@ func ParseCodexRateLimitHeaders(headers http.Header) *OpenAICodexUsageSnapshot {
 		hasData = true
 	}
 
-	if !hasData {
+	_, weeklyPresent, weeklyValid := openAI429WeeklyParsedHeaderUsage(headers, snapshot)
+	snapshot.invalidWeekly429 = weeklyPresent && !weeklyValid
+	if !hasData && !snapshot.invalidWeekly429 {
 		return nil
 	}
 
@@ -1141,6 +1187,11 @@ func buildCodexUsageExtraUpdates(snapshot *OpenAICodexUsageSnapshot, fallbackNow
 
 	baseTime := codexSnapshotBaseTime(snapshot, fallbackNow)
 	updates := make(map[string]any)
+	if snapshot.invalidWeekly429 {
+		updates[openAI429WeeklyInvalidAtKey] = baseTime.Format(time.RFC3339Nano)
+	} else if evidence := openAI429SnapshotWeeklyEvidence(snapshot, baseTime); evidence != nil {
+		updates[openAI429WeeklyEvidenceKey] = evidence
+	}
 
 	// 保存原始 primary/secondary 字段，便于排查问题
 	if snapshot.PrimaryUsedPercent != nil {

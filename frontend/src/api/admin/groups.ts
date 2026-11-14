@@ -21,6 +21,22 @@ export interface LiveCapability {
   reason?: string
 }
 
+export interface GroupAntiDistillationConfig {
+  enabled: boolean
+  pause_minutes: number
+}
+
+/** Group protection is saved independently from billing and other group settings. */
+export async function getAntiDistillation(id: number): Promise<GroupAntiDistillationConfig> {
+  const { data } = await apiClient.get<GroupAntiDistillationConfig>(`/admin/groups/${id}/anti-distillation`)
+  return data
+}
+
+export async function saveAntiDistillation(id: number, config: GroupAntiDistillationConfig): Promise<GroupAntiDistillationConfig> {
+  const { data } = await apiClient.put<GroupAntiDistillationConfig>(`/admin/groups/${id}/anti-distillation`, config)
+  return data
+}
+
 /**
  * List all groups with pagination
  * @param page - Page number (default: 1)
@@ -59,9 +75,10 @@ export async function list(
  * @param platform - Optional platform filter
  * @returns List of all active groups
  */
-export async function getAll(platform?: GroupPlatform): Promise<AdminGroup[]> {
+export async function getAll(platform?: GroupPlatform, signal?: AbortSignal): Promise<AdminGroup[]> {
   const { data } = await apiClient.get<AdminGroup[]>('/admin/groups/all', {
-    params: platform ? { platform } : undefined
+    params: platform ? { platform } : undefined,
+    ...(signal ? { signal } : {})
   })
   return data
 }
@@ -522,6 +539,8 @@ export async function getCapacitySummary(): Promise<
 }
 
 export const groupsAPI = {
+  getAntiDistillation,
+  saveAntiDistillation,
   list,
   getAll,
   getByPlatform,

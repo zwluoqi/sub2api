@@ -1,6 +1,12 @@
 vi.mock('@/api/admin/upstreamChannels', () => ({ listUpstreamChannels: vi.fn(), readChannelBindings: vi.fn(), bindChannelAccounts: vi.fn() }))
 import { readChannelBindings, listUpstreamChannels } from '@/api/admin/upstreamChannels'
 import UpstreamChannelSelector from '../UpstreamChannelSelector.vue'
+import { deleteTwoFALogin, getTwoFALogin, startTwoFALogin } from '@/api/admin/accountTokenGuard'
+
+vi.mock('@/api/admin/accountTokenGuard', async original => ({
+  ...await original<typeof import('@/api/admin/accountTokenGuard')>(),
+  startTwoFALogin: vi.fn(), getTwoFALogin: vi.fn(), deleteTwoFALogin: vi.fn(),
+}))
 
 vi.mock('@/api/admin/credentialEncryption', () => ({
   getCredentialEncryption: vi.fn().mockResolvedValue({ configured: true, source: 'server_config' }),
@@ -160,10 +166,14 @@ const ModelWhitelistSelectorStub = defineComponent({
       type: Array,
       default: () => [],
     },
+    modelMappings: {
+      type: Array,
+      default: () => [],
+    },
     platform: String,
     syncCredentials: Object,
   },
-  emits: ['update:modelValue', 'upstream-synced'],
+  emits: ['update:modelValue', 'update:modelMappings', 'upstream-synced'],
   template: `<button
     type="button"
     data-testid="model-whitelist-selector"
@@ -171,12 +181,14 @@ const ModelWhitelistSelectorStub = defineComponent({
   >models</button>`,
 })
 
-function mountModal(groups: any[] = []) {
+function mountModal(groups: any[] = [], realDialog = false) {
   return mount(CreateAccountModal, {
+    attachTo: realDialog ? document.body : undefined,
     props: { show: true, proxies: [], groups },
     global: {
       stubs: {
-        BaseDialog: BaseDialogStub,
+        BaseDialog: realDialog ? false : BaseDialogStub,
+        teleport: true,
         OAuthAuthorizationFlow: OAuthAuthorizationFlowStub,
         ConfirmDialog: true,
         Select: true,
@@ -202,7 +214,8 @@ async function selectButtonByText(wrapper: ReturnType<typeof mountModal>, text: 
 async function submitApiKeyAccount(
   platform: 'openai' | 'anthropic',
   enableLongContextBilling = false,
-  disableUpstreamBillingProbe = false
+  disableUpstreamBillingProbe = false,
+  enableResponseTierBilling = false
 ) {
   const wrapper = mountModal()
   await selectButtonByText(wrapper, platform === 'openai' ? 'OpenAI' : 'admin.accounts.claudeConsole')
@@ -213,6 +226,9 @@ async function submitApiKeyAccount(
   await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
   if (enableLongContextBilling) {
     await wrapper.get('[data-testid="openai-long-context-billing-toggle"]').trigger('click')
+  }
+  if (enableResponseTierBilling) {
+    await wrapper.get('[data-testid="create-openai-ultrafast-billing-toggle"]').trigger('click')
   }
   if (disableUpstreamBillingProbe) {
     await wrapper.get('[data-testid="upstream-billing-auto-probe"]').trigger('click')
@@ -252,6 +268,25 @@ function expectWSAcceleration(extra: unknown, enabled: boolean) {
 }
 
 describe('CreateAccountModal OpenAI long-context billing', () => {
+  it('leaves upstream response-tier billing disabled by default', async () => {
+    await submitApiKeyAccount('openai')
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]?.extra).not.toHaveProperty(
+      'openai_response_tier_billing_enabled'
+    )
+  })
+
+  it('enables upstream UltraFast billing for every model on a new API-key account', async () => {
+    await submitApiKeyAccount('openai', false, false, true)
+
+    expect(createAccountMock).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'openai',
+      type: 'apikey',
+      extra: expect.objectContaining({ openai_response_tier_billing_enabled: true })
+    }))
+  })
+
   it('saves extra image models only for OpenAI API-key accounts', async () => {
     const wrapper = mountModal()
     await selectButtonByText(wrapper, 'OpenAI')
@@ -559,6 +594,173 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     })
   })
 
+  it('keeps parallel 2FA imports and enrollment identities isolated until each enrollment completes', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    const callback = wrapper.getComponent(OpenAITwoFAImport).props('importCredential')
+    const deferred = <T,>() => {
+      let resolve!: (value: T) => void
+      const promise = new Promise<T>(yes => { resolve = yes })
+      return { promise, resolve }
+    }
+    type Result = { created: number; failed: number; items: { action: string; account_id: number }[] }
+    const imports = [deferred<Result>(), deferred<Result>()]
+    const enrollments = [deferred<void>(), deferred<void>()]
+    importCodexSessionMock.mockImplementationOnce(() => imports[0]!.promise).mockImplementationOnce(() => imports[1]!.promise)
+    createCredentialOperationsMock.mockImplementation((entry: { account_id: number }) => enrollments[entry.account_id - 41]!.promise)
+    const logins = [41, 42].map(id => ({ email: `fixture-${id}@example.test`, password: `synthetic-${id}`, mfa_secret: `synthetic-secret-${id}` }))
+    const controller = new AbortController()
+    const completed: number[] = []
+    const tasks = logins.map((login, i) => callback({ synthetic_account: i + 41 }, login.email, login, controller.signal).then(() => completed.push(i)))
+    expect(importCodexSessionMock).toHaveBeenCalledTimes(2)
+    expect(createCredentialOperationsMock).not.toHaveBeenCalled()
+    imports[1]!.resolve({ created: 1, failed: 0, items: [{ action: 'created', account_id: 42 }] })
+    await flushPromises()
+    expect(createCredentialOperationsMock).toHaveBeenCalledTimes(1)
+    expect(createCredentialOperationsMock).toHaveBeenLastCalledWith(expect.objectContaining({ account_id: 42, login_email: logins[1]!.email, password: logins[1]!.password, totp_secret: logins[1]!.mfa_secret }), { signal: controller.signal })
+    expect(completed).toEqual([])
+    imports[0]!.resolve({ created: 1, failed: 0, items: [{ action: 'created', account_id: 41 }] })
+    await flushPromises()
+    expect(createCredentialOperationsMock).toHaveBeenLastCalledWith(expect.objectContaining({ account_id: 41, login_email: logins[0]!.email, password: logins[0]!.password, totp_secret: logins[0]!.mfa_secret }), { signal: controller.signal })
+    enrollments[1]!.resolve()
+    await flushPromises()
+    expect(completed).toEqual([1])
+    enrollments[0]!.resolve()
+    await Promise.all(tasks)
+    expect(completed).toEqual([1, 0])
+    expect(wrapper.emitted('created')).toHaveLength(2)
+  })
+
+  it('does not enroll or announce success when stopped while a 2FA import response is pending', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    let resolve!: (result: unknown) => void
+    importCodexSessionMock.mockImplementationOnce(() => new Promise(yes => { resolve = yes }))
+    const controller = new AbortController()
+    const login = { email: 'fixture@example.test', password: 'synthetic', mfa_secret: 'synthetic-secret' }
+    const task = wrapper.getComponent(OpenAITwoFAImport).props('importCredential')({ synthetic_account: 41 }, login.email, login, controller.signal)
+    const rejection = expect(task).rejects.toThrow()
+    expect(importCodexSessionMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal)
+    controller.abort()
+    resolve({ created: 1, failed: 0, items: [{ action: 'created', account_id: 41 }] })
+    await rejection
+    expect(createCredentialOperationsMock).not.toHaveBeenCalled()
+    expect(wrapper.emitted('created')).toBeUndefined()
+  })
+
+  it.each(['deferred', 'failed'] as const)('2FA controlled Close/reopen preserves jobs through %s DELETE and allows cleanup recovery', async initialMode => {
+    const emails = ['a', 'b', 'c', 'd', 'e'].map(name => `${name}@example.test`)
+    const input = emails.map(email => `${email}----synthetic-password----synthetic-secret`).join('\n')
+    const live = new Map<string, string>()
+    let peak = 0
+    let sequence = 0
+    let mode: 'deferred' | 'failed' | 'confirmed' = initialMode
+    let retire!: () => void
+    const retirement = new Promise<void>(resolve => { retire = resolve })
+    vi.mocked(startTwoFALogin).mockReset().mockImplementation(async entry => {
+      const id = `fixture-${++sequence}`
+      live.set(id, entry.email)
+      peak = Math.max(peak, live.size)
+      return { id, status: 'running' }
+    })
+    vi.mocked(getTwoFALogin).mockReset().mockRejectedValue(Error('synthetic polling failure'))
+    vi.mocked(deleteTwoFALogin).mockReset().mockImplementation(async id => {
+      if (mode === 'failed') throw { status: 503 }
+      if (mode === 'deferred') await retirement
+      live.delete(id)
+    })
+    // Actual CreateAccountModal + BaseDialog + importer. Match AccountsView's
+    // controlled close listener instead of manually unmounting just the child.
+    const wrapper = mountModal([], true)
+    await wrapper.setProps({ onClose: () => { void wrapper.setProps({ show: false }) } })
+    const enter = async () => {
+      await selectButtonByText(wrapper, 'OpenAI')
+      await wrapper.get('[data-testid="openai-two-fa"]').trigger('click')
+      await wrapper.get('form#create-account-form').trigger('submit.prevent')
+      await flushPromises()
+      const importer = wrapper.getComponent(OpenAITwoFAImport)
+      await importer.get('textarea').setValue(input)
+      await importer.get('[data-testid="two-fa-start"]').trigger('click')
+      await flushPromises()
+      return importer
+    }
+    try {
+      const original = await enter()
+      expect(startTwoFALogin).toHaveBeenCalledTimes(3)
+      expect(wrapper.find('[role="dialog"]').exists()).toBe(true)
+      await wrapper.get('[aria-label="Close modal"]').trigger('click')
+      await flushPromises()
+      // Reopen exactly as the owner would. The reviewed implementation has
+      // already dropped its rows here, and the next submission reaches six.
+      await wrapper.setProps({ show: true })
+      await flushPromises()
+      if (!wrapper.findComponent(OpenAITwoFAImport).exists()) await enter()
+      expect(live.size).toBe(3)
+      expect(peak).toBe(3)
+      expect(startTwoFALogin).toHaveBeenCalledTimes(3)
+      expect(wrapper.getComponent(OpenAITwoFAImport).vm.$.uid).toBe(original.vm.$.uid)
+      expect(wrapper.emitted('close')).toBeUndefined()
+      expect(original.get('[data-testid="two-fa-owned-jobs"]').text()).toContain('tokenGuard.twoFA.ownedJobs')
+      expect(original.get('[data-testid="two-fa-start"]').attributes('disabled')).toBeUndefined()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await selectButtonByText(wrapper, 'common.back')
+      await flushPromises()
+      expect(wrapper.props('show')).toBe(true)
+      expect(wrapper.emitted('close')).toBeUndefined()
+
+      // Idle polling failures still offer explicit cleanup, so the Close fence
+      // has a visible recovery path without re-submitting any login.
+      await original.get('[data-testid="two-fa-stop"]').trigger('click')
+      await flushPromises()
+      expect(deleteTwoFALogin).toHaveBeenCalledTimes(3)
+      await wrapper.get('[aria-label="Close modal"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.props('show')).toBe(true)
+      expect(wrapper.getComponent(OpenAITwoFAImport).vm.$.uid).toBe(original.vm.$.uid)
+      expect(startTwoFALogin).toHaveBeenCalledTimes(3)
+      if (initialMode === 'failed') {
+        expect(original.get('[data-testid="two-fa-start"]').attributes('disabled')).toBeUndefined()
+        expect(original.get('[data-testid="two-fa-stop"]').attributes('disabled')).toBeUndefined()
+        expect(original.find('[data-testid="two-fa-owned-jobs"]').exists()).toBe(true)
+        mode = 'deferred'
+        await original.get('[data-testid="two-fa-stop"]').trigger('click')
+        await flushPromises()
+        expect(deleteTwoFALogin).toHaveBeenCalledTimes(6)
+      }
+      // Unconfirmed retirement cannot release the modal.
+      expect(live.size).toBe(3)
+      retire()
+      await flushPromises()
+      expect(live.size).toBe(0)
+      expect(original.find('[data-testid="two-fa-owned-jobs"]').exists()).toBe(false)
+      await wrapper.get('[aria-label="Close modal"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.props('show')).toBe(false)
+      expect(wrapper.emitted('close')).toHaveLength(1)
+      expect(wrapper.findComponent(OpenAITwoFAImport).exists()).toBe(false)
+      await wrapper.setProps({ show: true })
+      mode = 'confirmed'
+      const reopened = await enter()
+      expect(reopened.vm.$.uid).not.toBe(original.vm.$.uid)
+      expect(startTwoFALogin).toHaveBeenCalledTimes(6)
+      expect(live.size).toBe(3)
+      expect(new Set(live.values()).size).toBe(3)
+      expect(peak).toBe(3)
+      await reopened.get('[data-testid="two-fa-stop"]').trigger('click')
+      await flushPromises()
+      expect(live.size).toBe(0)
+    } finally {
+      mode = 'confirmed'
+      retire()
+      wrapper.unmount()
+      await flushPromises()
+    }
+  })
+
   it('sets month and year expiry presets without submitting the account form', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-01-31T12:34:00'))
@@ -754,6 +956,41 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
       'public-glm': 'glm-5.3'
     })
     expect(syncUpstreamModelsMock).toHaveBeenCalledWith(42)
+  })
+
+  it.each(['whitelist', 'mapping'] as const)('keeps reconciled creation models when inspecting %s mode', async (mode) => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'OpenAI')
+    await selectButtonByText(wrapper, 'API Key')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Synced account')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('test-api-key')
+    await selectButtonByText(wrapper, 'admin.accounts.modelMapping')
+    await selectButtonByText(wrapper, 'admin.accounts.addMapping')
+    await wrapper.get('input[placeholder="admin.accounts.requestModel"]').setValue('public-model')
+    await wrapper.get('input[placeholder="admin.accounts.actualModel"]').setValue('target')
+    await selectButtonByText(wrapper, 'admin.accounts.modelWhitelist')
+
+    const selector = wrapper.getComponent(ModelWhitelistSelectorStub)
+    expect(selector.props('modelMappings')).toEqual([])
+    // Exercise the parent's draft and save contract; discovery is covered by the selector tests.
+    selector.vm.$emit('update:modelValue', ['public-model', 'target'])
+    selector.vm.$emit('update:modelMappings', [])
+    selector.vm.$emit('upstream-synced')
+    await flushPromises()
+
+    if (mode === 'mapping') {
+      await selectButtonByText(wrapper, 'admin.accounts.modelMapping')
+      expect(wrapper.find('input[placeholder="admin.accounts.requestModel"]').exists()).toBe(false)
+      return
+    }
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledOnce()
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials?.model_mapping).toEqual({
+      'public-model': 'public-model',
+      target: 'target'
+    })
   })
 
   it('warns when post-create capability metadata remains incomplete', async () => {
@@ -1032,7 +1269,7 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     const labels = (testid: string) =>
       wrapper.get(`[data-testid="${testid}"]`).findAll('button').map(button => button.text().trim())
     expect(labels('platform-row-cn')).toEqual(['Kimi', 'Zhipu GLM', 'DeepSeek', 'MiniMax'])
-    expect(labels('platform-row-aggregators')).toEqual(['OpenCode', 'Command Code', 'Cline'])
+    expect(labels('platform-row-aggregators')).toEqual(['OpenCode', 'Command Code', 'Cline', 'Mistral', 'Qwen'])
   })
 
   it('creates a Cline account without an account type and with only the Chat Completions endpoint', async () => {
@@ -1057,6 +1294,78 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(payload?.credentials).not.toHaveProperty('protocol_rules')
     expect(payload?.credentials?.api_base_urls).not.toHaveProperty('responses')
     expect(payload?.credentials?.api_base_urls).not.toHaveProperty('anthropic')
+  })
+
+  it('creates Qwen with an independent platform and Chat Completions credentials', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-qwen"]').trigger('click')
+    expect(wrapper.find('[data-testid="generic-account-mode"]').exists()).toBe(false)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Qwen fixture')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('fixture-qwen-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      platform: 'qwen', type: 'apikey',
+      credentials: {
+        api_key: 'fixture-qwen-key', account_mode: 'payg', api_protocol: 'adaptive',
+        base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        api_base_urls: { chat_completions: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+      },
+    })
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials.api_base_urls).not.toHaveProperty('responses')
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials).not.toHaveProperty('model_mapping')
+  })
+
+  it('saves Qwen cache options and replaces both endpoint fields with the Token Plan preset', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-qwen"]').trigger('click')
+    await wrapper.get('[data-testid="qwen-session-cache"]').setValue(true)
+    await wrapper.get('[data-testid="qwen-strict-affinity"]').setValue(true)
+    await wrapper.get('[data-testid="qwen-token-plan-url"]').trigger('click')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Qwen cache fixture')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('fixture-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      platform: 'qwen', type: 'apikey', credentials: {
+        base_url: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1',
+        api_base_urls: { chat_completions: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1' },
+        qwen_session_cache_enabled: true,
+        qwen_strict_session_affinity: true
+      }
+    })
+  })
+
+  it('creates Mistral through the catalog with API key and only its native Chat endpoint', async () => {
+    const wrapper = mountModal()
+    await wrapper.get('[data-testid="platform-button-mistral"]').trigger('click')
+    expect(wrapper.get('[data-testid="platform-button-mistral"]').classes()).toContain('text-orange-600')
+    expect(wrapper.find('button.border-orange-500').exists()).toBe(true)
+    expect(wrapper.find('button.border-orange-500 .bg-orange-500').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="generic-account-mode"]').exists()).toBe(false)
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Mistral')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('fixture-mistral-key')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0]?.[0]).toMatchObject({
+      platform: 'mistral',
+      type: 'apikey',
+      credentials: {
+        api_key: 'fixture-mistral-key',
+        account_mode: 'payg',
+        api_protocol: 'adaptive',
+        base_url: 'https://api.mistral.ai/v1',
+        api_base_urls: { chat_completions: 'https://api.mistral.ai/v1' },
+      },
+    })
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials.api_base_urls).toEqual({
+      chat_completions: 'https://api.mistral.ai/v1',
+    })
+    expect(createAccountMock.mock.calls[0]?.[0]?.credentials.model_mapping).toHaveProperty('zai-glm-5-3', 'zai-glm-5-3')
   })
 
   it('submits adaptive Kimi protocol endpoints', async () => {
@@ -1184,6 +1493,56 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     expect(createAccountMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBeUndefined()
     // 上游倍率探测已放宽到全部 API-key 平台：非 OpenAI 平台与 OpenAI 一致，默认开启。
     expect(createAccountMock.mock.calls[0]?.[0]?.upstream_billing_probe_enabled).toBe(true)
+  })
+
+  it.each([false, true])('saves Anthropic mimic with estimated deduction=%s and clears strip identity', async (deduct) => {
+    const wrapper = mountModal()
+    expect(wrapper.find('[data-testid="anthropic-mimic-claude-code-toggle"]').exists()).toBe(false)
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Claude Code relay')
+    await wrapper.get('form#create-account-form input[type="password"]').setValue('fixture-only-key')
+
+    const mimic = wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]')
+    const strip = wrapper.findAll('div.flex.items-center.justify-between')
+      .find(row => row.text().includes('admin.accounts.anthropic.stripClaudeCodeIdentityDesc'))!
+      .get('button')
+    expect(mimic.classes()).not.toContain('bg-primary-600')
+    await strip.trigger('click')
+    await mimic.trigger('click')
+    await flushPromises()
+    expect(strip.classes()).not.toContain('bg-primary-600')
+    const deduction = wrapper.get('[data-testid="anthropic-mimic-claude-code-deduct-tokens-toggle"]')
+    expect(deduction.attributes('aria-checked')).toBe('false')
+    if (deduct) {
+      await deduction.trigger('click')
+    }
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    await flushPromises()
+
+    const payload = createAccountMock.mock.calls[0]?.[0]
+    expect(payload).toMatchObject({
+      platform: 'anthropic', type: 'apikey', extra: { anthropic_mimic_claude_code: true },
+    })
+    expect(payload.extra).not.toHaveProperty('anthropic_strip_claude_code_identity')
+    if (deduct) {
+      expect(payload.extra.anthropic_mimic_claude_code_deduct_tokens).toBe(true)
+    } else {
+      expect(payload.extra).not.toHaveProperty('anthropic_mimic_claude_code_deduct_tokens')
+    }
+  })
+
+  it('clears the Anthropic mimic switch when changing the account platform', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    await wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="anthropic-mimic-claude-code-deduct-tokens-toggle"]').trigger('click')
+    await selectButtonByText(wrapper, 'OpenAI')
+    expect(wrapper.find('[data-testid="anthropic-mimic-claude-code-toggle"]').exists()).toBe(false)
+    await selectButtonByText(wrapper, 'Anthropic')
+    await selectButtonByText(wrapper, 'admin.accounts.claudeConsole')
+    expect(wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').classes()).not.toContain('bg-primary-600')
+    await wrapper.get('[data-testid="anthropic-mimic-claude-code-toggle"]').trigger('click')
+    expect(wrapper.get('[data-testid="anthropic-mimic-claude-code-deduct-tokens-toggle"]').attributes('aria-checked')).toBe('false')
   })
 
   it('sends an explicit disabled state when the non-OpenAI create toggle is turned off', async () => {

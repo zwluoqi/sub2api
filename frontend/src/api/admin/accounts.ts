@@ -1,3 +1,4 @@
+import type { AccountPerformance, PerformanceConfig, PerformanceEvent } from '@/types/accountPerformance'
 /**
  * Admin Accounts API endpoints
  * Handles AI platform account management for administrators
@@ -40,6 +41,14 @@ import type {
   OpenCodeGoUsageSettings,
   OpenCodeGoUsageState
 } from '@/types'
+
+/** Current account slots in use, independent of dashboard history and ops settings. */
+export async function getConcurrencySummary(): Promise<{ current_concurrency: number }> {
+  const { data } = await apiClient.get<{ current_concurrency: number }>(
+    '/admin/accounts/concurrency-summary'
+  )
+  return data
+}
 
 /**
  * List all accounts with pagination
@@ -632,6 +641,15 @@ export interface SyncUpstreamModelsResult {
   warnings?: UpstreamModelSyncWarning[]
   discovery_source?: 'upstream' | 'configured_fallback'
   grok_model_diagnostics?: GrokModelDiagnostics
+  applied?: boolean
+  changed?: boolean
+  skipped?: string
+  next_sync_at?: string
+}
+
+export interface SyncUpstreamModelsOptions {
+  apply?: boolean
+  automatic?: boolean
 }
 
 export interface UpstreamModelSyncWarning {
@@ -657,8 +675,12 @@ export interface UpstreamModelMetadata {
  * @param id - Account ID
  * @returns List of model IDs returned by the upstream
  */
-export async function syncUpstreamModels(id: number): Promise<SyncUpstreamModelsResult> {
-  const { data } = await apiClient.post<SyncUpstreamModelsResult>(`/admin/accounts/${id}/models/sync-upstream`)
+export async function syncUpstreamModels(
+  id: number,
+  options?: SyncUpstreamModelsOptions,
+  request?: { signal?: AbortSignal }
+): Promise<SyncUpstreamModelsResult> {
+  const { data } = await apiClient.post<SyncUpstreamModelsResult>(`/admin/accounts/${id}/models/sync-upstream`, options, request)
   return data
 }
 
@@ -788,9 +810,10 @@ export async function importData(payload: {
   return data
 }
 
-export async function importCodexSession(payload: CodexSessionImportRequest): Promise<CodexSessionImportResult> {
+export async function importCodexSession(payload: CodexSessionImportRequest, options?: { signal?: AbortSignal }): Promise<CodexSessionImportResult> {
   const { data } = await apiClient.post<CodexSessionImportResult>('/admin/accounts/import/codex-session', payload, {
-    timeout: 120000 // 120s timeout for large session imports
+    timeout: 120000, // 120s timeout for large session imports
+    signal: options?.signal
   })
   return data
 }
@@ -1458,6 +1481,8 @@ export async function getOpenAIRequestTimezones(): Promise<{ default: string; ti
 }
 
 export const accountsAPI = {
+  getConcurrencySummary,
+ getPerformance, savePerformance, releasePerformance, getPerformanceEvents,
   getOpenAIRequestTimezones,
   list,
   listWithEtag,
@@ -1544,4 +1569,19 @@ export default accountsAPI
 export async function getManagementCapabilities(): Promise<{ web_search_enabled: boolean; account_quota_notify_enabled: boolean; concurrency_upgrade_enabled?: boolean }> {
   const { data } = await apiClient.get('/admin/accounts/management-capabilities')
   return data
+}
+
+export async function getPerformance(accountIds: number[], signal?: AbortSignal): Promise<Record<number, AccountPerformance>> {
+ const {data}=await apiClient.post<Record<number, AccountPerformance>>('/admin/accounts/performance',{account_ids:accountIds},{signal})
+ return data
+}
+export async function savePerformance(id:number,config:PerformanceConfig,revision:number): Promise<void> {
+ await apiClient.put('/admin/accounts/'+id+'/performance',{config,revision})
+}
+export async function releasePerformance(id:number,revision:number,pauseGeneration:number): Promise<void> {
+ await apiClient.post('/admin/accounts/'+id+'/performance/release',{revision,pause_generation:pauseGeneration})
+}
+export async function getPerformanceEvents(id:number): Promise<PerformanceEvent[]> {
+ const {data}=await apiClient.get<PerformanceEvent[]>('/admin/accounts/'+id+'/performance/events')
+ return data
 }

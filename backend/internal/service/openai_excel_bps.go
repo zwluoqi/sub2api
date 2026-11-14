@@ -32,6 +32,10 @@ var excelBPSCatalog basispoints.CatalogCache
 // Independently authorized Excel grants never quarantine the primary Codex
 // account. Legacy single-grant accounts retain their authentication policy.
 func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, account *Account, status int, headers http.Header, raw []byte, tokens ...string) {
+	if account != nil && account.AuthConnectionID != "" {
+		s.handleOpenAIAccountUpstreamError(ctx, account, status, headers, raw)
+		return
+	}
 	if status != http.StatusUnauthorized || isQualityObservation(ctx) {
 		return
 	}
@@ -68,6 +72,9 @@ func (s *OpenAIGatewayService) handleExcelBPSUnauthorized(ctx context.Context, a
 }
 
 func (s *OpenAIGatewayService) moveExcelBPSOn403(ctx context.Context, account *Account) bool {
+	if account != nil && account.AuthConnectionID != "" {
+		return false
+	}
 	target, enabled := account.ExcelBPS403GroupTarget()
 	if !enabled || isQualityObservation(ctx) {
 		return false
@@ -90,6 +97,9 @@ func (s *OpenAIGatewayService) moveExcelBPSOn403(ctx context.Context, account *A
 }
 
 func (s *OpenAIGatewayService) disableExcelBPSOn403(ctx context.Context, account *Account) bool {
+	if account != nil && account.AuthConnectionID != "" {
+		return false
+	}
 	if !account.IsExcelBPSAutoDisableOn403Enabled() || isQualityObservation(ctx) {
 		return false
 	}
@@ -204,6 +214,15 @@ func newExcelBPSRequestTo(ctx context.Context, targetURL, accept string, body []
 		"X-Openai-Internal-Basispoints-Client-Product":       {"basispoints-excel-plugin"},
 		"X-Openai-Internal-Basispoints-Client-Agent-Profile": {"excel"},
 	}
+	// Derive the user only from the bearer actually sent on this request. The
+	// parent account can retain a different Codex grant or stale user metadata.
+	// Decoding projects identity; it does not assert JWT signature validation.
+	if claims, decodeErr := openai.DecodeIDToken(token); decodeErr == nil && claims.OpenAIAuth != nil {
+		userID := strings.TrimSpace(firstNonEmptyReauth(claims.OpenAIAuth.ChatGPTUserID, claims.OpenAIAuth.UserID))
+		if userID != "" && !strings.ContainsAny(userID, "\r\n") {
+			req.Header.Set("X-Openai-Account-User-Id", userID)
+		}
+	}
 	return req, nil
 }
 
@@ -259,14 +278,25 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	}
 	// No output exists yet, so the handler may replay the request on another
 	// account within its switch budget unless the client is already gone.
-	failoverRateLimited := func(retryAfter string) (*OpenAIForwardResult, error) {
+	failoverRateLimited := func(retryAfter string, responseHeaders ...http.Header) (*OpenAIForwardResult, error) {
 		if !isQualityObservation(ctx) {
-			s.coolDownExcelBPS(ctx, account, retryAfter)
+			s.coolDownExcelBPS(ctx, account, retryAfter, responseHeaders...)
 		}
 		if isExcelBPSClientCancellation(c, ctx.Err()) {
 			return clientCanceled()
 		}
 		return nil, newExcelBPSRateLimitedFailoverError(retryAfter)
+	}
+	// BPS returns before the native forwarder's tier policy. Apply that same
+	// administrator policy before building the BPS wire body.
+	body, err := s.applyOpenAIFastPolicyToBody(ctx, account, model, body)
+	if err != nil {
+		var blocked *OpenAIFastBlockedError
+		if errors.As(err, &blocked) {
+			MarkResponseCommitted(c)
+			writeOpenAIFastPolicyBlockedResponse(c, blocked)
+		}
+		return nil, err
 	}
 	imageSettings, err := s.settingService.GetExcelBPSImageRelaySettings(ctx)
 	if err != nil {
@@ -287,6 +317,10 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		return fail(400, "basispoints_request_invalid", "Invalid model request")
 	}
 	identity, transient := resolveExcelBPSIdentity(c, body, getAPIKeyIDFromContext(c), account.IsExcelBPSMihomoEnabled())
+	if account.AuthConnectionID != "" && identity != "" {
+		identity = isolateOpenAIUpstreamSessionID(getAPIKeyIDFromContext(c), account, identity)
+	}
+
 	if identity != "" {
 		body, err = sjson.SetBytes(body, "prompt_cache_key", identity)
 		if err != nil {
@@ -315,6 +349,9 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 		}
 	}
 	scope := fmt.Sprintf("account:%d/key:%d/thread:%s", account.ID, getAPIKeyIDFromContext(c), identity)
+	if account.AuthConnectionID != "" {
+		scope += "/connection:" + account.AuthConnectionID
+	}
 	if transient {
 		scope = "transient:" + scope
 	}
@@ -623,6 +660,14 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			lease.ReportUpstreamFailure()
 		}
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+		// A BPS 5xx is a transient server failure, not a connection credential
+		// failure. Like a legacy BPS account, fail only this request and keep the
+		// managed connection schedulable; cooling it would stop every request on
+		// the account until the cooldown expires.
+		if account.AuthConnectionID != "" && resp.StatusCode < http.StatusInternalServerError {
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, raw, model)
+		}
+
 		observeBPSTestResponse(ctx, resp, model, token, gjson.GetBytes(raw, "error.code").String())
 		// BPS throttles its own endpoint. A BPS 429 must not write Codex
 		// quota/cooldown state; it cools only the BPS route and fails over.
@@ -655,7 +700,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			Message: upstreamMessage, Detail: upstreamDetail, UpstreamResponseBody: upstreamDetail,
 		})
 		if resp.StatusCode == http.StatusTooManyRequests {
-			return failoverRateLimited(resp.Header.Get("Retry-After"))
+			return failoverRateLimited(resp.Header.Get("Retry-After"), resp.Header)
 		}
 		if resp.StatusCode == http.StatusUnauthorized {
 			s.handleExcelBPSUnauthorized(ctx, account, resp.StatusCode, resp.Header, raw, token)
@@ -727,7 +772,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			observeBPSTestResponse(repairCtx, repairResp, model, token, gjson.GetBytes(raw, "error.code").String())
 			if repairResp.StatusCode == http.StatusTooManyRequests {
 				// Output was already accepted: cool the route, never replay the request.
-				s.coolDownExcelBPS(repairCtx, account, repairResp.Header.Get("Retry-After"))
+				s.coolDownExcelBPS(repairCtx, account, repairResp.Header.Get("Retry-After"), repairResp.Header)
 			}
 			s.handleExcelBPSUnauthorized(repairCtx, account, repairResp.StatusCode, repairResp.Header, raw, token)
 			if isExcelBPSModelPermissionError(repairResp.StatusCode, gjson.GetBytes(raw, "error.code").String()) && !isQualityObservation(repairCtx) {
@@ -771,7 +816,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 			observeBPSTestResponse(repairCtx, repaired, model, token, gjson.GetBytes(raw, "error.code").String())
 			_ = repaired.Body.Close()
 			if repaired.StatusCode == http.StatusTooManyRequests {
-				s.coolDownExcelBPS(repairCtx, account, repaired.Header.Get("Retry-After"))
+				s.coolDownExcelBPS(repairCtx, account, repaired.Header.Get("Retry-After"), repaired.Header)
 			}
 			s.handleExcelBPSUnauthorized(repairCtx, account, repaired.StatusCode, repaired.Header, raw, token)
 			if isExcelBPSModelPermissionError(repaired.StatusCode, gjson.GetBytes(raw, "error.code").String()) && !isQualityObservation(repairCtx) {
@@ -793,7 +838,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 	// The bridge sees the body after group policy mapping. Keep the original
 	// client effort for usage display, and the BPS-normalized effort for billing.
 	requestedEffort := coalesceRequestedReasoningEffort(RequestedReasoningEffortFromContext(ctx), &bridge.RequestedEffort)
-	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, RequestID: resp.Header.Get("x-request-id")}
+	result := &OpenAIForwardResult{Model: originalModel, UpstreamModel: model, UpstreamEndpoint: "/basispoints/api/responses", Stream: stream, ReasoningEffort: &bridge.Effort, RequestedReasoningEffort: requestedEffort, ServiceTier: extractOpenAIServiceTierFromBody(upstreamBody), RequestID: resp.Header.Get("x-request-id")}
 	if stream {
 		c.Header("Content-Type", "text/event-stream")
 		c.Header("Cache-Control", "no-cache")
@@ -849,6 +894,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 				completed = []byte(gjson.GetBytes(payload, "response").Raw)
 				result.ResponseID = gjson.GetBytes(payload, "response.id").String()
 				result.UpstreamResponseModel = gjson.GetBytes(payload, "response.model").String()
+				result.UpstreamResponseServiceTier = normalizeObservedOpenAIServiceTier(gjson.GetBytes(payload, "response.service_tier").String())
 				upstreamFailure = basispoints.ParseUpstreamFailure(payload)
 				if bridgeFailure != nil {
 					markPriorityAttemptFailure(ctx)
@@ -875,7 +921,7 @@ func (s *OpenAIGatewayService) forwardExcelBPS(ctx context.Context, c *gin.Conte
 						IntendedStatus: upstreamFailure.Status, CountTowardsSLA: true, NonStream: !stream,
 					})
 					if upstreamFailure.Status == http.StatusTooManyRequests && !isQualityObservation(ctx) {
-						s.coolDownExcelBPS(ctx, account, resp.Header.Get("Retry-After"))
+						s.coolDownExcelBPS(ctx, account, resp.Header.Get("Retry-After"), resp.Header)
 					}
 				}
 			}

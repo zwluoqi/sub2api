@@ -1,5 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
+import NewFeatureBadge from '@/components/common/NewFeatureBadge.vue'
+import { NEW_FEATURE_NOTICES } from '@/constants/newFeatureNotices'
 import AccountUsageCell from '../AccountUsageCell.vue'
 import type { Account } from '@/types'
 
@@ -162,6 +165,26 @@ describe('AccountUsageCell', () => {
     await wrapper.setProps({ account: { ...wrapper.props('account'), codex_turn_tickets: [] } })
     expect(wrapper.text()).not.toContain('codexTurnTicket')
     expect(wrapper.text()).not.toContain('42m00s')
+    wrapper.unmount()
+  })
+
+  it('keeps cached Claude quota visible while a replacement batch is loading', async () => {
+    const requestBatchedUsage = vi.fn()
+    const wrapper = mount(AccountUsageCell, {
+      props: { account: makeAccount({ id: 98101, platform: 'anthropic', type: 'oauth' }), requestBatchedUsage,
+        batchedUsage: { five_hour: { utilization: 21 } }, batchedUsageLoading: false },
+      global: { stubs: { UsageProgressBar: { props: ['utilization'], template: '<div data-test="quota">{{ utilization }}</div>' }, AccountQuotaInfo: true } }
+    })
+    await flushPromises()
+    const quota = wrapper.get('[data-test="quota"]').element
+    await wrapper.setProps({ batchedUsageLoading: true })
+    expect(wrapper.get('[data-test="quota"]').text()).toBe('21')
+    expect(wrapper.get('[data-test="quota"]').element).toBe(quota)
+    expect(wrapper.find('.animate-pulse').exists()).toBe(false)
+    expect(wrapper.attributes('aria-busy')).toBe('true')
+    await wrapper.setProps({ batchedUsage: { five_hour: { utilization: 44 } }, batchedUsageLoading: false })
+    expect(wrapper.get('[data-test="quota"]').text()).toBe('44')
+    expect(wrapper.get('[data-test="quota"]').element).toBe(quota)
     wrapper.unmount()
   })
 
@@ -442,6 +465,70 @@ describe('AccountUsageCell', () => {
     expect(wrapper.text()).not.toContain('-')
   })
 
+  it('Mistral 官方端点账号渲染月度预算窗口与剩余额度单元格，自定义中转显示占位符', async () => {
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9106,
+          platform: 'mistral',
+          type: 'apikey',
+          credentials: { api_key: 'mstrl_test', base_url: 'https://api.mistral.ai/v1' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="cn-quota-cell"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cn-balance-cell"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('-')
+
+    const relayWrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({
+          id: 9107,
+          platform: 'mistral',
+          type: 'apikey',
+          credentials: { api_key: 'mstrl_test', base_url: 'https://relay.example.com/v1' }
+        })
+      },
+      global: {
+        stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true }
+      }
+    })
+
+    await flushPromises()
+
+    expect(relayWrapper.find('div[title="admin.accounts.cnProviders.noBalanceEndpoint"]').exists()).toBe(true)
+  })
+
+  it('shares the Mistral announcement across the real usage cell and another entry', async () => {
+    localStorage.removeItem('sub2api:new-feature-notices:v1:41')
+    const pinia = createPinia()
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        noticeUserId: 41,
+        account: makeAccount({ id: 9108, platform: 'mistral', type: 'apikey', credentials: { base_url: 'https://api.mistral.ai/v1' } })
+      },
+      global: { plugins: [pinia], stubs: { ...cnUsageCellStubs, UsageProgressBar: true, AccountQuotaInfo: true } }
+    })
+    const otherEntry = mount(NewFeatureBadge, {
+      props: { userId: 41, noticeId: NEW_FEATURE_NOTICES.mistralBudgetUsage },
+      global: { plugins: [pinia] }
+    })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="new-feature-badge"]').exists()).toBe(true)
+    await otherEntry.get('[data-testid="new-feature-badge"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="new-feature-badge"]').exists()).toBe(false)
+    wrapper.unmount()
+    otherEntry.unmount()
+    localStorage.removeItem('sub2api:new-feature-notices:v1:41')
+  })
+
   it('Antigravity 图片用量会聚合新旧 image 模型', async () => {
     getUsage.mockResolvedValue({
       antigravity_quota: {
@@ -483,6 +570,107 @@ describe('AccountUsageCell', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('admin.accounts.usageWindow.gemini3Image|70|2026-03-01T09:00:00Z')
+  })
+
+  it('Antigravity shows the 5-hour and weekly window of each quota group when the summary is present', async () => {
+    getUsage.mockResolvedValue({
+      antigravity_quota: {
+        'gemini-3-flash': { utilization: 99, reset_time: '2026-11-11T15:52:48Z' }
+      },
+      antigravity_quota_groups: [
+        {
+          key: 'gemini',
+          name: 'Gemini Models',
+          windows: [
+            { window: '5h', utilization: 60, resets_at: '2026-11-04T20:52:48Z' },
+            { window: 'weekly', utilization: 25, resets_at: '2026-11-11T15:52:48Z' }
+          ]
+        },
+        {
+          key: '3p',
+          name: 'Claude and GPT models',
+          windows: [
+            { window: '5h', utilization: 0, resets_at: null },
+            { window: 'weekly', utilization: 10, resets_at: '2026-11-11T15:52:48Z' }
+          ]
+        },
+        {
+          key: 'gemini-argon-wtu',
+          name: 'Gemini 4 Argon',
+          windows: [{ window: 'weekly', utilization: 20, resets_at: '2026-11-11T17:11:15Z' }]
+        }
+      ]
+    })
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 1003, platform: 'antigravity', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'color'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+
+    await flushPromises()
+
+    const bars = wrapper.findAll('.usage-bar').map((bar) => bar.text())
+    expect(bars).toEqual([
+      'admin.accounts.usageWindow.antigravityGemini5h|60|2026-11-04T20:52:48Z',
+      'admin.accounts.usageWindow.antigravityGeminiWeekly|25|2026-11-11T15:52:48Z',
+      'admin.accounts.usageWindow.antigravityOther5h|0|',
+      'admin.accounts.usageWindow.antigravityOtherWeekly|10|2026-11-11T15:52:48Z',
+      // Pro plans' separate Argon quota is its own row, not a second Claude/GPT week.
+      'admin.accounts.usageWindow.antigravityArgonWeekly|20|2026-11-11T17:11:15Z'
+    ])
+    // The per-model figure (one tighter window per model) is not shown next to the real windows.
+    expect(wrapper.text()).not.toContain('gemini3Flash')
+  })
+
+  it('Antigravity query button refreshes past the server cache', async () => {
+    const first = {
+      antigravity_quota_groups: [
+        { key: '3p', name: 'Claude and GPT models', windows: [{ window: 'weekly', utilization: 100, resets_at: '2026-11-12T03:39:37Z' }] }
+      ]
+    }
+    const upgraded = {
+      antigravity_quota_groups: [
+        { key: '3p', name: 'Claude and GPT models', windows: [{ window: 'weekly', utilization: 0, resets_at: '2026-11-14T21:22:49Z' }] }
+      ]
+    }
+    getUsage.mockResolvedValueOnce(first).mockResolvedValueOnce(upgraded)
+
+    const wrapper = mount(AccountUsageCell, {
+      props: {
+        account: makeAccount({ id: 1006, platform: 'antigravity', type: 'oauth', extra: {} })
+      },
+      global: {
+        stubs: {
+          UsageProgressBar: {
+            props: ['label', 'utilization', 'resetsAt', 'color'],
+            template: '<div class="usage-bar">{{ label }}|{{ utilization }}|{{ resetsAt }}</div>'
+          },
+          AccountQuotaInfo: true
+        }
+      }
+    })
+    await flushPromises()
+    expect(wrapper.find('.usage-bar').text()).toContain('|100|')
+
+    const button = wrapper.find('[data-testid="antigravity-active-query"]')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toContain('admin.accounts.usageWindow.activeQuery')
+    await button.trigger('click')
+    await flushPromises()
+
+    // An active query that bypasses the cache (an upgrade or reset shows at once).
+    expect(getUsage).toHaveBeenLastCalledWith(1006, 'active', true)
+    expect(wrapper.find('.usage-bar').text()).toContain('|0|2026-11-14T21:22:49Z')
   })
 
   it('Antigravity 会显示 AI Credits 余额信息', async () => {

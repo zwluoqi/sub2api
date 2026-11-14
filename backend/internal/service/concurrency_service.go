@@ -230,7 +230,8 @@ const (
 
 // ConcurrencyService 管理账号和用户的并发限制。
 type ConcurrencyService struct {
-	cache ConcurrencyCache
+	cache             ConcurrencyCache
+	performancePauses PerformancePauseReader
 
 	accountLoadCacheTTL atomic.Int64
 	accountLoadCacheMu  sync.RWMutex
@@ -349,7 +350,36 @@ type UserLoadInfo struct {
 // If the account is at max concurrency, it waits until a slot is available or timeout.
 // Returns a release function that MUST be called when the request completes.
 func (s *ConcurrencyService) AcquireAccountSlot(ctx context.Context, accountID int64, maxConcurrency int) (*AcquireResult, error) {
+	// Recheck the independent live authority even for stale/sticky candidates.
+	if s.performancePauses != nil {
+		paused, err := s.performancePauses.PerformancePaused(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		if paused[accountID] {
+			return &AcquireResult{Acquired: false}, nil
+		}
+	}
 	// If maxConcurrency is 0 or negative, no limit
+	// A stale scheduler snapshot may still carry the concurrency from before an
+	// AI action. Recheck the shared authority before admitting a new slot; never
+	// enlarge a caller's stricter bound or interrupt an already-held request.
+	if reader, ok := s.performancePauses.(interface {
+		AIOpsRuntime(context.Context, []int64) (map[int64]AIOpsRuntime, error)
+	}); ok {
+		runtime, err := reader.AIOpsRuntime(ctx, []int64{accountID})
+		if err != nil {
+			return nil, err
+		}
+		if current, exists := runtime[accountID]; exists {
+			if current.Paused {
+				return &AcquireResult{Acquired: false}, nil
+			}
+			if current.Concurrency > 0 && (maxConcurrency <= 0 || current.Concurrency < maxConcurrency) {
+				maxConcurrency = current.Concurrency
+			}
+		}
+	}
 	if maxConcurrency <= 0 {
 		return &AcquireResult{
 			Acquired:    true,

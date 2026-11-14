@@ -97,6 +97,7 @@ type ChannelModelPricing struct {
 	OutputPrice                *float64            `json:"output_price"`
 	CacheWritePrice            *float64            `json:"cache_write_price"`
 	CacheWrite1hPrice          *float64            `json:"cache_write_1h_price"`
+	CacheWrite12hPrice         *float64            `json:"cache_write_12h_price"`
 	CacheReadPrice             *float64            `json:"cache_read_price"`
 	FastMultiplier             *float64            `json:"fast_multiplier"`
 	FlexMultiplier             *float64            `json:"flex_multiplier"`
@@ -135,6 +136,7 @@ type PricingInterval struct {
 	OutputPrice          *float64  `json:"output_price"`
 	CacheWritePrice      *float64  `json:"cache_write_price"`
 	CacheWrite1hPrice    *float64  `json:"cache_write_1h_price"`
+	CacheWrite12hPrice   *float64  `json:"cache_write_12h_price"`
 	CacheReadPrice       *float64  `json:"cache_read_price"`
 	InputMultiplier      *float64  `json:"input_multiplier"`
 	OutputMultiplier     *float64  `json:"output_multiplier"`
@@ -383,6 +385,7 @@ func validateIntervalPrices(iv *PricingInterval, idx int) error {
 		{"output_price", iv.OutputPrice},
 		{"cache_write_price", iv.CacheWritePrice},
 		{"cache_write_1h_price", iv.CacheWrite1hPrice},
+		{"cache_write_12h_price", iv.CacheWrite12hPrice},
 		{"cache_read_price", iv.CacheReadPrice},
 		{"per_request_price", iv.PerRequestPrice},
 	}
@@ -442,8 +445,12 @@ type ChannelUsageFields struct {
 	ChannelID          int64  // 渠道 ID（0 = 无渠道）
 	OriginalModel      string // 用户原始请求模型（渠道映射前）
 	ChannelMappedModel string // 渠道映射后的模型名（无映射时等于 OriginalModel）
-	BillingModelSource string // 计费模型来源："requested" / "upstream" / "channel_mapped"
-	ModelMappingChain  string // 映射链描述，如 "a→b→c"
+	// APIKeyMappedModel records the target actually applied to this request.
+	// Empty means no key rewrite; billing must not infer it from current settings.
+	APIKeyMappedModel     string
+	ChannelMappingApplied bool   // Preserves explicit channel mappings back to OriginalModel.
+	BillingModelSource    string // 计费模型来源："requested" / "upstream" / "channel_mapped"
+	ModelMappingChain     string // 映射链描述，如 "a→b→c"
 }
 
 // SupportedModel 渠道的一个支持模型条目（无通配符、可直接展示给用户）

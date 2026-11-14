@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/url"
 	"reflect"
 	"slices"
@@ -22,7 +23,9 @@ import (
 )
 
 type Account struct {
-	InitialAdmissionPlan *ScheduledTestPlan `json:"-"`
+	AuthConnectionID       string
+	AuthConnectionRevision int64
+	InitialAdmissionPlan   *ScheduledTestPlan `json:"-"`
 	// InitialQualityPlan is internal create-only state, never imported or exported.
 	InitialQualityPlan      *ScheduledTestPlan `json:"-"`
 	ID                      int64
@@ -53,7 +56,8 @@ type Account struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 
-	Schedulable bool
+	Schedulable       bool
+	PerformancePaused bool
 
 	RateLimitedAt    *time.Time
 	RateLimitResetAt *time.Time
@@ -82,6 +86,7 @@ type Account struct {
 	modelMappingCacheRawLen         int
 	modelMappingCacheRawSig         uint64
 	modelMappingCacheRuntimeVersion uint64
+	modelMappingCacheMode           string
 	// modelMappingCacheShared 为 true 时缓存来自只读共享母本（见 PrepareSharedSnapshot），
 	// 指针、长度与运行时版本匹配即直接复用预解析结果，不计算签名。
 	modelMappingCacheShared bool
@@ -220,8 +225,19 @@ func (a *Account) EffectiveLoadFactor() int {
 	return 1
 }
 
+// accountLoadPreferenceRate preserves load_factor as a bounded soft preference
+// after capacity has been measured against real concurrency slots.
+func accountLoadPreferenceRate(account *Account, loadRate int) int {
+	if account == nil || account.Concurrency <= 0 || account.LoadFactor == nil || *account.LoadFactor <= 0 {
+		return loadRate
+	}
+	weight := float64(*account.LoadFactor) / float64(account.Concurrency)
+	weight = math.Max(0.5, math.Min(2, weight))
+	return int(math.Round(float64(max(0, loadRate)) / weight))
+}
+
 func (a *Account) IsSchedulable() bool {
-	if !a.IsActive() || !a.Schedulable {
+	if !a.IsActive() || !a.Schedulable || a.PerformancePaused {
 		return false
 	}
 	now := time.Now()
@@ -671,6 +687,7 @@ func (a *Account) GetModelMapping() map[string]string {
 	rawMapping, _ := a.Credentials["model_mapping"].(map[string]any)
 	rawPtr := mapPtr(rawMapping)
 	rawLen := len(rawMapping)
+	mode := a.GetCredential(OpenAIModelMappingModeKey)
 	rawSig := uint64(0)
 	rawSigReady := false
 
@@ -678,6 +695,7 @@ func (a *Account) GetModelMapping() map[string]string {
 		a.modelMappingCacheCredentialsPtr == credentialsPtr &&
 		a.modelMappingCacheRawPtr == rawPtr &&
 		a.modelMappingCacheRawLen == rawLen &&
+		a.modelMappingCacheMode == mode &&
 		a.modelMappingCacheRuntimeVersion == runtimeVersion {
 		if a.modelMappingCacheShared {
 			return a.modelMappingCache
@@ -690,6 +708,15 @@ func (a *Account) GetModelMapping() map[string]string {
 	}
 
 	mapping := a.resolveModelMapping(rawMapping)
+	if a.hasOAuthInitialModelSelection() {
+		filtered := make(map[string]string)
+		for source, target := range mapping {
+			if a.oauthInitialSelectionAllows(source) && a.oauthInitialSelectionAllows(target) {
+				filtered[source] = target
+			}
+		}
+		mapping = filtered
+	}
 	if !rawSigReady {
 		rawSig = modelMappingSignature(rawMapping)
 	}
@@ -701,6 +728,7 @@ func (a *Account) GetModelMapping() map[string]string {
 	a.modelMappingCacheRawLen = rawLen
 	a.modelMappingCacheRawSig = rawSig
 	a.modelMappingCacheRuntimeVersion = runtimeVersion
+	a.modelMappingCacheMode = mode
 	a.modelMappingCacheShared = false
 	return mapping
 }
@@ -752,6 +780,11 @@ func (a *Account) resolveModelMapping(rawMapping map[string]any) map[string]stri
 		}
 	}
 	if len(result) > 0 {
+		// An explicit OAuth whitelist is the native model boundary. Provider
+		// defaults must not silently reintroduce models removed by an edit.
+		if a.Type == AccountTypeOAuth && a.GetCredential(OpenAIModelMappingModeKey) == "whitelist" {
+			return result
+		}
 		if a.Platform == domain.PlatformAntigravity {
 			ensureAntigravityDefaultPassthroughs(result, antigravityDefaultPassthroughModels)
 			applyAntigravityGemini31ProAliases(result)
@@ -960,12 +993,16 @@ func mappingHasWildcardForModel(mapping map[string]string, model string) bool {
 // operator-controlled switch for Grok image/edit/video generation, so an
 // eligible Grok account may inherit only the built-in, known media aliases
 // without widening its chat allowlist or accepting arbitrary model names.
+// Explicit OAuth whitelist mode also limits media to its declared mappings.
 //
 // billing_unobserved remains a candidate here because the scheduler must be
 // able to select the account and let the request path perform its authoritative
 // media eligibility probe before forwarding.
 func (a *Account) resolveGrokMediaFallbackModel(requestedModel string) (string, bool) {
 	if a == nil || !a.IsGrok() {
+		return "", false
+	}
+	if a.Type == AccountTypeOAuth && a.GetCredential(OpenAIModelMappingModeKey) == "whitelist" && len(asAnyModelMapping(a.Credentials["model_mapping"])) > 0 {
 		return "", false
 	}
 
@@ -1041,6 +1078,17 @@ func (a *Account) IsModelSupported(requestedModel string) bool {
 }
 
 func (a *Account) isModelMappingSupported(requestedModel string) bool {
+	if !a.oauthInitialSelectionAllows(requestedModel) || !a.oauthInitialSelectionAllows(a.GetMappedModel(requestedModel)) {
+		return false
+	}
+	if a.hasOAuthInitialModelSelection() {
+		// Consult the stored exact scope before provider defaults can inject
+		// passthroughs, aliases, media fallbacks or an empty-map fallback.
+		target, ok := asAnyModelMapping(a.Credentials["model_mapping"])[requestedModel].(string)
+		if !ok || !a.oauthInitialSelectionAllows(target) {
+			return false
+		}
+	}
 	// Apply the credential boundary before passthrough's model allowlist bypass.
 	if a.IsExcelOAuth() && !a.IsExcelBPSEnabledForModel(requestedModel) {
 		return false
@@ -1660,6 +1708,9 @@ func (a *Account) GetAPIProtocol() string {
 	if a == nil || !a.IsMultiProtocolAPIKey() {
 		return APIProtocolChatCompletions
 	}
+	if a.QwenSessionCacheEnabled() {
+		return APIProtocolResponses
+	}
 	switch strings.TrimSpace(a.GetCredential("api_protocol")) {
 	case APIProtocolAdaptive:
 		return APIProtocolAdaptive
@@ -1795,6 +1846,12 @@ func (a *Account) GetCodingPlanProvider() string {
 	if a.IsCline() {
 		if a.clineAccountAPISupported() {
 			return PlatformCline
+		}
+		return ""
+	}
+	if a.IsMistral() {
+		if a.mistralUsageSupported() {
+			return PlatformMistral
 		}
 		return ""
 	}
@@ -2019,6 +2076,12 @@ func (a *Account) GetOpenAISessionID() string {
 }
 
 func (a *Account) SupportsOpenAIEndpointCapability(capability OpenAIEndpointCapability) bool {
+	if a.HasManagedOpenAIConnections() && a.AuthConnectionID == "" {
+		return a.managedConnectionSupports(string(capability))
+	}
+	if validateOpenAIConnectionKind(a) != nil {
+		return false
+	}
 	if a == nil {
 		return false
 	}
@@ -2221,6 +2284,9 @@ func (a *Account) openAIEndpointCapabilitySet() (map[string]bool, bool) {
 }
 
 func (a *Account) SupportsOpenAIImageCapability(capability OpenAIImagesCapability) bool {
+	if a.HasManagedOpenAIConnections() && capability != "" {
+		return false
+	}
 	if capability == "" {
 		return true
 	}
@@ -2484,6 +2550,9 @@ func (a *Account) IsCopilotSDKEnabled() bool {
 // 1. 按账号类型读取分类型字段
 // 2. 分类型字段缺失时，回退兼容字段
 func (a *Account) IsOpenAIResponsesWebSocketV2Enabled() bool {
+	if a.HasManagedOpenAIConnections() {
+		return false
+	}
 	if a.IsSIWCEnabled() {
 		return false
 	}
@@ -2558,6 +2627,9 @@ func normalizeOpenAIWSIngressDefaultMode(mode string) string {
 // 3. 兼容 enabled 旧字段（bool）
 // 4. defaultMode（非法时回退 ctx_pool）
 func (a *Account) ResolveOpenAIResponsesWebSocketV2Mode(defaultMode string) string {
+	if a.HasManagedOpenAIConnections() {
+		return OpenAIWSIngressModeOff
+	}
 	if a.IsSIWCEnabled() {
 		return OpenAIWSIngressModeOff
 	}
@@ -2697,6 +2769,34 @@ func (a *Account) IsAnthropicStripClaudeCodeIdentityEnabled() bool {
 		return false
 	}
 	enabled, ok := a.Extra[anthropicStripClaudeCodeIdentityExtraKey].(bool)
+	return ok && enabled
+}
+
+const anthropicMimicClaudeCodeExtraKey = "anthropic_mimic_claude_code"
+
+// IsAnthropicMimicClaudeCodeEnabled 返回 Anthropic API Key 账号是否启用
+// "模拟 Claude Code 客户端"（上游只放行 Claude Code 时，给普通客户端的请求补齐
+// Claude Code 请求头、身份句和 metadata.user_id）。
+// 字段：accounts.extra.anthropic_mimic_claude_code。
+// 与"抹除 Claude Code 身份"互斥：两者同时开启时以抹除为准，本开关视为关闭。
+func (a *Account) IsAnthropicMimicClaudeCodeEnabled() bool {
+	if a == nil || a.Platform != PlatformAnthropic || a.Type != AccountTypeAPIKey || a.Extra == nil {
+		return false
+	}
+	if a.IsAnthropicStripClaudeCodeIdentityEnabled() {
+		return false
+	}
+	enabled, ok := a.Extra[anthropicMimicClaudeCodeExtraKey].(bool)
+	return ok && enabled
+}
+
+// IsAnthropicMimicClaudeCodeDeductTokensEnabled controls the optional estimate
+// for gateway-injected identity tokens. Missing or false preserves normal billing.
+func (a *Account) IsAnthropicMimicClaudeCodeDeductTokensEnabled() bool {
+	if !a.IsAnthropicMimicClaudeCodeEnabled() {
+		return false
+	}
+	enabled, ok := a.Extra["anthropic_mimic_claude_code_deduct_tokens"].(bool)
 	return ok && enabled
 }
 

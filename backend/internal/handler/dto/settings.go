@@ -322,6 +322,9 @@ type SystemSettings struct {
 	PaymentAlipayMobilePrecreateDeepLink bool `json:"payment_alipay_mobile_precreate_deep_link"`
 
 	// 余额、订阅到期与账号限额通知
+	BalanceForecastEnabled          bool               `json:"balance_forecast_enabled"`
+	BalanceForecastThresholdHours   float64            `json:"balance_forecast_threshold_hours"`
+	BalanceForecastMaxNotifications int                `json:"balance_forecast_max_notifications"`
 	BalanceLowNotifyEnabled         bool               `json:"balance_low_notify_enabled"`
 	BalanceLowNotifyThreshold       float64            `json:"balance_low_notify_threshold"`
 	BalanceLowNotifyRechargeURL     string             `json:"balance_low_notify_recharge_url"`
@@ -339,10 +342,12 @@ type SystemSettings struct {
 	ChannelMonitorHideUserRanking        bool   `json:"channel_monitor_hide_user_ranking"`
 
 	// Grok model mapping policy (admin settings; empty account mapping falls back to these).
-	GrokDefaultTextModel           string `json:"grok_default_text_model"`
-	GrokCrossClientModelMapEnabled bool   `json:"grok_cross_client_model_map_enabled"`
-	GrokDefaultBaseURLMode         string `json:"grok_default_base_url_mode"`
-	GrokVideoSourceURLEnabled      bool   `json:"grok_video_source_url_enabled"`
+	GrokDefaultTextModel                 string `json:"grok_default_text_model"`
+	GrokCrossClientModelMapEnabled       bool   `json:"grok_cross_client_model_map_enabled"`
+	GrokDefaultBaseURLMode               string `json:"grok_default_base_url_mode"`
+	GrokVideoSourceURLEnabled            bool   `json:"grok_video_source_url_enabled"`
+	OpenAI409OmitEncryptedHistoryEnabled bool   `json:"openai_409_omit_encrypted_history_enabled"`
+	OpenAI400OmitEncryptedHistoryEnabled bool   `json:"openai_400_omit_encrypted_history_enabled"`
 
 	// Available Channels feature switch (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
@@ -410,6 +415,8 @@ type SystemSettings struct {
 	ExcelBPSImageStorageMiB               int    `json:"excel_bps_image_storage_mib"`
 	ExcelBPSImageStorageEntries           int    `json:"excel_bps_image_storage_entries"`
 	ExcelBPSImageTTLMinutes               int    `json:"excel_bps_image_ttl_minutes"`
+
+	SmartOpsHiddenMenuItems []string `json:"smart_ops_hidden_menu_items"`
 }
 
 type DefaultSubscriptionSetting struct {
@@ -503,6 +510,7 @@ type PublicSettings struct {
 	PluginManagementEnabled bool `json:"plugin_management_enabled"`
 
 	SupportTicketEnabled bool `json:"support_ticket_enabled"`
+	LotteryEnabled       bool `json:"lottery_enabled"`
 
 	AffiliateEnabled bool `json:"affiliate_enabled"`
 

@@ -200,6 +200,15 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 字段，上游 400 "The `reasoning_content` in the thinking mode must be
 	// passed back to the API"。在共用出站点补空格占位，真实明文不覆盖。
 	body = ensureDeepSeekChatReasoningPlaceholders(account, body)
+	body = stripDisallowedMistralChatMessageExtras(account, body)
+	// Mistral answers 400 for efforts outside the model allow-list. Every caller
+	// already normalizes; this keeps any future CC send path safe as well.
+	body = enforceMistralChatReasoningEffort(account, body)
+	// Check after every conversion and account model mapping, including hidden
+	// reasoning replay and the provider-specific placeholders added above.
+	if err := s.checkAPIKeyLongContextBeforeSend(context.WithoutCancel(ctx), c, body, extractOpenAICodexTicketModel(body)); err != nil {
+		return nil, err
+	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	releaseUpstreamCtx()
@@ -282,6 +291,7 @@ type ccStreamScanState struct {
 func (s *OpenAIGatewayService) scanCCStream(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	logPrefix string,
 	requestID string,
 	startTime time.Time,
@@ -312,11 +322,21 @@ func (s *OpenAIGatewayService) scanCCStream(
 		}
 
 		if u := extractCCStreamUsage(payload); u != nil {
+			mergeOpenAIProtectionUsageEvidence(st.Usage, u)
 			st.Usage = *u
 		}
 
+		normalized, err := normalizeMistralChatResponse(account, []byte(payload), true)
+		if err != nil {
+			st.Err = err
+			return st
+		}
 		var chunk apicompat.ChatCompletionsChunk
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+		if err := json.Unmarshal(normalized, &chunk); err != nil {
+			if account != nil && account.Platform == PlatformMistral {
+				st.Err = errMistralContent
+				return st
+			}
 			logger.L().Warn(logPrefix+": failed to parse chat stream chunk",
 				zap.Error(err),
 				zap.String("request_id", requestID),
@@ -338,6 +358,9 @@ func (s *OpenAIGatewayService) scanCCStream(
 			)
 		}
 		st.Err = err
+		if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, requestID, err); handled {
+			st.Err = resetErr
+		}
 	}
 	return st
 }
@@ -354,16 +377,25 @@ func logCCStreamMissingDoneSentinel(logPrefix, requestID string) {
 func (s *OpenAIGatewayService) readCCUpstreamJSONResponse(
 	c *gin.Context,
 	resp *http.Response,
+	account *Account,
 	writeError compatErrorWriter,
 ) (*apicompat.ChatCompletionsResponse, OpenAIUsage, error) {
 	respBody, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resetErr, handled := handleOpenAIHTTP2PeerReset(c, account, resp.Header.Get("x-request-id"), err); handled {
+			return nil, OpenAIUsage{}, resetErr
+		}
 		if !errors.Is(err, ErrUpstreamResponseBodyTooLarge) {
 			writeError(c, http.StatusBadGateway, "api_error", "Failed to read upstream response")
 		}
 		return nil, OpenAIUsage{}, fmt.Errorf("read upstream body: %w", err)
 	}
 
+	respBody, err = normalizeMistralChatResponse(account, respBody, true)
+	if err != nil {
+		writeError(c, http.StatusBadGateway, "api_error", "Failed to parse upstream response")
+		return nil, OpenAIUsage{}, err
+	}
 	var ccResp apicompat.ChatCompletionsResponse
 	if err := json.Unmarshal(respBody, &ccResp); err != nil {
 		writeError(c, http.StatusBadGateway, "api_error", "Failed to parse upstream response")

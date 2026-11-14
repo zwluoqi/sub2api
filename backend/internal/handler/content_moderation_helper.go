@@ -34,12 +34,19 @@ func clientRequestedModel(c *gin.Context, fallback string) string {
 	return fallback
 }
 
-func bindOpenAIPriorityObservation(c *gin.Context, group *int64, model string) {
+func bindOpenAIPriorityObservation(c *gin.Context, group *int64, model string, body ...[]byte) {
 	c.Request = c.Request.WithContext(service.WithPrioritySchedulingObservation(c.Request.Context(), group, clientRequestedModel(c, model), GetInboundEndpoint(c)))
+	if len(body) > 0 {
+		c.Request = c.Request.WithContext(service.WithObservationRequestEffort(c.Request.Context(), body[0]))
+	}
 }
 
 func clientRequestedUsageFields(c *gin.Context, mapping service.ChannelMappingResult, fallbackModel, upstreamModel string) service.ChannelUsageFields {
-	return mapping.ToUsageFields(clientRequestedModel(c, fallbackModel), upstreamModel)
+	fields := mapping.ToUsageFields(clientRequestedModel(c, fallbackModel), upstreamModel)
+	if c != nil && c.Request != nil {
+		fields.APIKeyMappedModel = service.APIKeyMappedModelFromContext(c.Request.Context())
+	}
+	return fields
 }
 
 func runContentModeration(c *gin.Context, reqLog *zap.Logger, svc *service.ContentModerationService, apiKey *service.APIKey, subject middleware2.AuthSubject, protocol string, model string, body []byte) *service.ContentModerationDecision {

@@ -100,6 +100,21 @@ func Status(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldStatus, v))
 }
 
+// ReasoningEffort applies equality check predicate on the "reasoning_effort" field. It's identical to ReasoningEffortEQ.
+func ReasoningEffort(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldReasoningEffort, v))
+}
+
+// AllowLongContext applies equality check predicate on the "allow_long_context" field. It's identical to AllowLongContextEQ.
+func AllowLongContext(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAllowLongContext, v))
+}
+
+// ContextTokenLimit applies equality check predicate on the "context_token_limit" field. It's identical to ContextTokenLimitEQ.
+func ContextTokenLimit(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldContextTokenLimit, v))
+}
+
 // LastUsedAt applies equality check predicate on the "last_used_at" field. It's identical to LastUsedAtEQ.
 func LastUsedAt(v time.Time) predicate.APIKey {
 	return predicate.APIKey(sql.FieldEQ(FieldLastUsedAt, v))
@@ -578,6 +593,121 @@ func StatusEqualFold(v string) predicate.APIKey {
 // StatusContainsFold applies the ContainsFold predicate on the "status" field.
 func StatusContainsFold(v string) predicate.APIKey {
 	return predicate.APIKey(sql.FieldContainsFold(FieldStatus, v))
+}
+
+// ReasoningEffortEQ applies the EQ predicate on the "reasoning_effort" field.
+func ReasoningEffortEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortNEQ applies the NEQ predicate on the "reasoning_effort" field.
+func ReasoningEffortNEQ(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortIn applies the In predicate on the "reasoning_effort" field.
+func ReasoningEffortIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldReasoningEffort, vs...))
+}
+
+// ReasoningEffortNotIn applies the NotIn predicate on the "reasoning_effort" field.
+func ReasoningEffortNotIn(vs ...string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldReasoningEffort, vs...))
+}
+
+// ReasoningEffortGT applies the GT predicate on the "reasoning_effort" field.
+func ReasoningEffortGT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortGTE applies the GTE predicate on the "reasoning_effort" field.
+func ReasoningEffortGTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortLT applies the LT predicate on the "reasoning_effort" field.
+func ReasoningEffortLT(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortLTE applies the LTE predicate on the "reasoning_effort" field.
+func ReasoningEffortLTE(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortContains applies the Contains predicate on the "reasoning_effort" field.
+func ReasoningEffortContains(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContains(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortHasPrefix applies the HasPrefix predicate on the "reasoning_effort" field.
+func ReasoningEffortHasPrefix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasPrefix(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortHasSuffix applies the HasSuffix predicate on the "reasoning_effort" field.
+func ReasoningEffortHasSuffix(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldHasSuffix(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortEqualFold applies the EqualFold predicate on the "reasoning_effort" field.
+func ReasoningEffortEqualFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEqualFold(FieldReasoningEffort, v))
+}
+
+// ReasoningEffortContainsFold applies the ContainsFold predicate on the "reasoning_effort" field.
+func ReasoningEffortContainsFold(v string) predicate.APIKey {
+	return predicate.APIKey(sql.FieldContainsFold(FieldReasoningEffort, v))
+}
+
+// AllowLongContextEQ applies the EQ predicate on the "allow_long_context" field.
+func AllowLongContextEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldAllowLongContext, v))
+}
+
+// AllowLongContextNEQ applies the NEQ predicate on the "allow_long_context" field.
+func AllowLongContextNEQ(v bool) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldAllowLongContext, v))
+}
+
+// ContextTokenLimitEQ applies the EQ predicate on the "context_token_limit" field.
+func ContextTokenLimitEQ(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldEQ(FieldContextTokenLimit, v))
+}
+
+// ContextTokenLimitNEQ applies the NEQ predicate on the "context_token_limit" field.
+func ContextTokenLimitNEQ(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNEQ(FieldContextTokenLimit, v))
+}
+
+// ContextTokenLimitIn applies the In predicate on the "context_token_limit" field.
+func ContextTokenLimitIn(vs ...int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldIn(FieldContextTokenLimit, vs...))
+}
+
+// ContextTokenLimitNotIn applies the NotIn predicate on the "context_token_limit" field.
+func ContextTokenLimitNotIn(vs ...int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldNotIn(FieldContextTokenLimit, vs...))
+}
+
+// ContextTokenLimitGT applies the GT predicate on the "context_token_limit" field.
+func ContextTokenLimitGT(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGT(FieldContextTokenLimit, v))
+}
+
+// ContextTokenLimitGTE applies the GTE predicate on the "context_token_limit" field.
+func ContextTokenLimitGTE(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldGTE(FieldContextTokenLimit, v))
+}
+
+// ContextTokenLimitLT applies the LT predicate on the "context_token_limit" field.
+func ContextTokenLimitLT(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLT(FieldContextTokenLimit, v))
+}
+
+// ContextTokenLimitLTE applies the LTE predicate on the "context_token_limit" field.
+func ContextTokenLimitLTE(v int) predicate.APIKey {
+	return predicate.APIKey(sql.FieldLTE(FieldContextTokenLimit, v))
 }
 
 // LastUsedAtEQ applies the EQ predicate on the "last_used_at" field.

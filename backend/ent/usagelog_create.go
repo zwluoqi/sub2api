@@ -27,6 +27,20 @@ type UsageLogCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetPlatform sets the "platform" field.
+func (_c *UsageLogCreate) SetPlatform(v string) *UsageLogCreate {
+	_c.mutation.SetPlatform(v)
+	return _c
+}
+
+// SetNillablePlatform sets the "platform" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillablePlatform(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetPlatform(*v)
+	}
+	return _c
+}
+
 // SetUserID sets the "user_id" field.
 func (_c *UsageLogCreate) SetUserID(v int64) *UsageLogCreate {
 	_c.mutation.SetUserID(v)
@@ -281,6 +295,34 @@ func (_c *UsageLogCreate) SetNillableCacheCreation1hTokens(v *int) *UsageLogCrea
 	return _c
 }
 
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (_c *UsageLogCreate) SetCacheCreation30mTokens(v int) *UsageLogCreate {
+	_c.mutation.SetCacheCreation30mTokens(v)
+	return _c
+}
+
+// SetNillableCacheCreation30mTokens sets the "cache_creation_30m_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableCacheCreation30mTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetCacheCreation30mTokens(*v)
+	}
+	return _c
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (_c *UsageLogCreate) SetCacheCreation12hTokens(v int) *UsageLogCreate {
+	_c.mutation.SetCacheCreation12hTokens(v)
+	return _c
+}
+
+// SetNillableCacheCreation12hTokens sets the "cache_creation_12h_tokens" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableCacheCreation12hTokens(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetCacheCreation12hTokens(*v)
+	}
+	return _c
+}
+
 // SetInputCost sets the "input_cost" field.
 func (_c *UsageLogCreate) SetInputCost(v float64) *UsageLogCreate {
 	_c.mutation.SetInputCost(v)
@@ -463,6 +505,20 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (_c *UsageLogCreate) SetQueueWaitMs(v int) *UsageLogCreate {
+	_c.mutation.SetQueueWaitMs(v)
+	return _c
+}
+
+// SetNillableQueueWaitMs sets the "queue_wait_ms" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableQueueWaitMs(v *int) *UsageLogCreate {
+	if v != nil {
+		_c.SetQueueWaitMs(*v)
+	}
+	return _c
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (_c *UsageLogCreate) SetUserAgent(v string) *UsageLogCreate {
 	_c.mutation.SetUserAgent(v)
@@ -623,6 +679,12 @@ func (_c *UsageLogCreate) SetNillableCacheTTLOverridden(v *bool) *UsageLogCreate
 	return _c
 }
 
+// SetQueueTiming sets the "queue_timing" field.
+func (_c *UsageLogCreate) SetQueueTiming(v map[string]interface{}) *UsageLogCreate {
+	_c.mutation.SetQueueTiming(v)
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *UsageLogCreate) SetCreatedAt(v time.Time) *UsageLogCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -721,6 +783,14 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultCacheCreation1hTokens
 		_c.mutation.SetCacheCreation1hTokens(v)
 	}
+	if _, ok := _c.mutation.CacheCreation30mTokens(); !ok {
+		v := usagelog.DefaultCacheCreation30mTokens
+		_c.mutation.SetCacheCreation30mTokens(v)
+	}
+	if _, ok := _c.mutation.CacheCreation12hTokens(); !ok {
+		v := usagelog.DefaultCacheCreation12hTokens
+		_c.mutation.SetCacheCreation12hTokens(v)
+	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		v := usagelog.DefaultInputCost
 		_c.mutation.SetInputCost(v)
@@ -781,6 +851,11 @@ func (_c *UsageLogCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *UsageLogCreate) check() error {
+	if v, ok := _c.mutation.Platform(); ok {
+		if err := usagelog.PlatformValidator(v); err != nil {
+			return &ValidationError{Name: "platform", err: fmt.Errorf(`ent: validator failed for field "UsageLog.platform": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.UserID(); !ok {
 		return &ValidationError{Name: "user_id", err: errors.New(`ent: missing required field "UsageLog.user_id"`)}
 	}
@@ -853,6 +928,12 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.CacheCreation1hTokens(); !ok {
 		return &ValidationError{Name: "cache_creation_1h_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_1h_tokens"`)}
+	}
+	if _, ok := _c.mutation.CacheCreation30mTokens(); !ok {
+		return &ValidationError{Name: "cache_creation_30m_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_30m_tokens"`)}
+	}
+	if _, ok := _c.mutation.CacheCreation12hTokens(); !ok {
+		return &ValidationError{Name: "cache_creation_12h_tokens", err: errors.New(`ent: missing required field "UsageLog.cache_creation_12h_tokens"`)}
 	}
 	if _, ok := _c.mutation.InputCost(); !ok {
 		return &ValidationError{Name: "input_cost", err: errors.New(`ent: missing required field "UsageLog.input_cost"`)}
@@ -967,6 +1048,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec = sqlgraph.NewCreateSpec(usagelog.Table, sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.Platform(); ok {
+		_spec.SetField(usagelog.FieldPlatform, field.TypeString, value)
+		_node.Platform = &value
+	}
 	if value, ok := _c.mutation.RequestID(); ok {
 		_spec.SetField(usagelog.FieldRequestID, field.TypeString, value)
 		_node.RequestID = value
@@ -1031,6 +1116,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldCacheCreation1hTokens, field.TypeInt, value)
 		_node.CacheCreation1hTokens = value
 	}
+	if value, ok := _c.mutation.CacheCreation30mTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation30mTokens, field.TypeInt, value)
+		_node.CacheCreation30mTokens = value
+	}
+	if value, ok := _c.mutation.CacheCreation12hTokens(); ok {
+		_spec.SetField(usagelog.FieldCacheCreation12hTokens, field.TypeInt, value)
+		_node.CacheCreation12hTokens = value
+	}
 	if value, ok := _c.mutation.InputCost(); ok {
 		_spec.SetField(usagelog.FieldInputCost, field.TypeFloat64, value)
 		_node.InputCost = value
@@ -1083,6 +1176,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
 	}
+	if value, ok := _c.mutation.QueueWaitMs(); ok {
+		_spec.SetField(usagelog.FieldQueueWaitMs, field.TypeInt, value)
+		_node.QueueWaitMs = &value
+	}
 	if value, ok := _c.mutation.UserAgent(); ok {
 		_spec.SetField(usagelog.FieldUserAgent, field.TypeString, value)
 		_node.UserAgent = &value
@@ -1130,6 +1227,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheTTLOverridden(); ok {
 		_spec.SetField(usagelog.FieldCacheTTLOverridden, field.TypeBool, value)
 		_node.CacheTTLOverridden = value
+	}
+	if value, ok := _c.mutation.QueueTiming(); ok {
+		_spec.SetField(usagelog.FieldQueueTiming, field.TypeJSON, value)
+		_node.QueueTiming = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1227,7 +1328,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 // of the `INSERT` statement. For example:
 //
 //	client.UsageLog.Create().
-//		SetUserID(v).
+//		SetPlatform(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -1236,7 +1337,7 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetPlatform(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreate) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertOne {
@@ -1271,6 +1372,24 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetPlatform sets the "platform" field.
+func (u *UsageLogUpsert) SetPlatform(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldPlatform, v)
+	return u
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdatePlatform() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldPlatform)
+	return u
+}
+
+// ClearPlatform clears the value of the "platform" field.
+func (u *UsageLogUpsert) ClearPlatform() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldPlatform)
+	return u
+}
 
 // SetUserID sets the "user_id" field.
 func (u *UsageLogUpsert) SetUserID(v int64) *UsageLogUpsert {
@@ -1626,6 +1745,42 @@ func (u *UsageLogUpsert) AddCacheCreation1hTokens(v int) *UsageLogUpsert {
 	return u
 }
 
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsert) SetCacheCreation30mTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldCacheCreation30mTokens, v)
+	return u
+}
+
+// UpdateCacheCreation30mTokens sets the "cache_creation_30m_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateCacheCreation30mTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldCacheCreation30mTokens)
+	return u
+}
+
+// AddCacheCreation30mTokens adds v to the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsert) AddCacheCreation30mTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldCacheCreation30mTokens, v)
+	return u
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsert) SetCacheCreation12hTokens(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldCacheCreation12hTokens, v)
+	return u
+}
+
+// UpdateCacheCreation12hTokens sets the "cache_creation_12h_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateCacheCreation12hTokens() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldCacheCreation12hTokens)
+	return u
+}
+
+// AddCacheCreation12hTokens adds v to the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsert) AddCacheCreation12hTokens(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldCacheCreation12hTokens, v)
+	return u
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsert) SetInputCost(v float64) *UsageLogUpsert {
 	u.Set(usagelog.FieldInputCost, v)
@@ -1866,6 +2021,30 @@ func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	return u
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsert) SetQueueWaitMs(v int) *UsageLogUpsert {
+	u.Set(usagelog.FieldQueueWaitMs, v)
+	return u
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateQueueWaitMs() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldQueueWaitMs)
+	return u
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsert) AddQueueWaitMs(v int) *UsageLogUpsert {
+	u.Add(usagelog.FieldQueueWaitMs, v)
+	return u
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsert) ClearQueueWaitMs() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldQueueWaitMs)
+	return u
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsert) SetUserAgent(v string) *UsageLogUpsert {
 	u.Set(usagelog.FieldUserAgent, v)
@@ -2082,6 +2261,24 @@ func (u *UsageLogUpsert) UpdateCacheTTLOverridden() *UsageLogUpsert {
 	return u
 }
 
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsert) SetQueueTiming(v map[string]interface{}) *UsageLogUpsert {
+	u.Set(usagelog.FieldQueueTiming, v)
+	return u
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateQueueTiming() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldQueueTiming)
+	return u
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsert) ClearQueueTiming() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldQueueTiming)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -2125,6 +2322,27 @@ func (u *UsageLogUpsertOne) Update(set func(*UsageLogUpsert)) *UsageLogUpsertOne
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetPlatform sets the "platform" field.
+func (u *UsageLogUpsertOne) SetPlatform(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetPlatform(v)
+	})
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdatePlatform() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdatePlatform()
+	})
+}
+
+// ClearPlatform clears the value of the "platform" field.
+func (u *UsageLogUpsertOne) ClearPlatform() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearPlatform()
+	})
 }
 
 // SetUserID sets the "user_id" field.
@@ -2540,6 +2758,48 @@ func (u *UsageLogUpsertOne) UpdateCacheCreation1hTokens() *UsageLogUpsertOne {
 	})
 }
 
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsertOne) SetCacheCreation30mTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCacheCreation30mTokens(v)
+	})
+}
+
+// AddCacheCreation30mTokens adds v to the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsertOne) AddCacheCreation30mTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCacheCreation30mTokens(v)
+	})
+}
+
+// UpdateCacheCreation30mTokens sets the "cache_creation_30m_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateCacheCreation30mTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCacheCreation30mTokens()
+	})
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsertOne) SetCacheCreation12hTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCacheCreation12hTokens(v)
+	})
+}
+
+// AddCacheCreation12hTokens adds v to the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsertOne) AddCacheCreation12hTokens(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCacheCreation12hTokens(v)
+	})
+}
+
+// UpdateCacheCreation12hTokens sets the "cache_creation_12h_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateCacheCreation12hTokens() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCacheCreation12hTokens()
+	})
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsertOne) SetInputCost(v float64) *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -2820,6 +3080,34 @@ func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	})
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) SetQueueWaitMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueWaitMs(v)
+	})
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) AddQueueWaitMs(v int) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddQueueWaitMs(v)
+	})
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateQueueWaitMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueWaitMs()
+	})
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsertOne) ClearQueueWaitMs() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueWaitMs()
+	})
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsertOne) SetUserAgent(v string) *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -3072,6 +3360,27 @@ func (u *UsageLogUpsertOne) UpdateCacheTTLOverridden() *UsageLogUpsertOne {
 	})
 }
 
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsertOne) SetQueueTiming(v map[string]interface{}) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueTiming(v)
+	})
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateQueueTiming() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueTiming()
+	})
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsertOne) ClearQueueTiming() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueTiming()
+	})
+}
+
 // Exec executes the query.
 func (u *UsageLogUpsertOne) Exec(ctx context.Context) error {
 	if len(u.create.conflict) == 0 {
@@ -3207,7 +3516,7 @@ func (_c *UsageLogCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.UsageLogUpsert) {
-//			SetUserID(v+v).
+//			SetPlatform(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *UsageLogCreateBulk) OnConflict(opts ...sql.ConflictOption) *UsageLogUpsertBulk {
@@ -3281,6 +3590,27 @@ func (u *UsageLogUpsertBulk) Update(set func(*UsageLogUpsert)) *UsageLogUpsertBu
 		set(&UsageLogUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetPlatform sets the "platform" field.
+func (u *UsageLogUpsertBulk) SetPlatform(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetPlatform(v)
+	})
+}
+
+// UpdatePlatform sets the "platform" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdatePlatform() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdatePlatform()
+	})
+}
+
+// ClearPlatform clears the value of the "platform" field.
+func (u *UsageLogUpsertBulk) ClearPlatform() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearPlatform()
+	})
 }
 
 // SetUserID sets the "user_id" field.
@@ -3696,6 +4026,48 @@ func (u *UsageLogUpsertBulk) UpdateCacheCreation1hTokens() *UsageLogUpsertBulk {
 	})
 }
 
+// SetCacheCreation30mTokens sets the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsertBulk) SetCacheCreation30mTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCacheCreation30mTokens(v)
+	})
+}
+
+// AddCacheCreation30mTokens adds v to the "cache_creation_30m_tokens" field.
+func (u *UsageLogUpsertBulk) AddCacheCreation30mTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCacheCreation30mTokens(v)
+	})
+}
+
+// UpdateCacheCreation30mTokens sets the "cache_creation_30m_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateCacheCreation30mTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCacheCreation30mTokens()
+	})
+}
+
+// SetCacheCreation12hTokens sets the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsertBulk) SetCacheCreation12hTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCacheCreation12hTokens(v)
+	})
+}
+
+// AddCacheCreation12hTokens adds v to the "cache_creation_12h_tokens" field.
+func (u *UsageLogUpsertBulk) AddCacheCreation12hTokens(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddCacheCreation12hTokens(v)
+	})
+}
+
+// UpdateCacheCreation12hTokens sets the "cache_creation_12h_tokens" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateCacheCreation12hTokens() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCacheCreation12hTokens()
+	})
+}
+
 // SetInputCost sets the "input_cost" field.
 func (u *UsageLogUpsertBulk) SetInputCost(v float64) *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -3976,6 +4348,34 @@ func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	})
 }
 
+// SetQueueWaitMs sets the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) SetQueueWaitMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueWaitMs(v)
+	})
+}
+
+// AddQueueWaitMs adds v to the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) AddQueueWaitMs(v int) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddQueueWaitMs(v)
+	})
+}
+
+// UpdateQueueWaitMs sets the "queue_wait_ms" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateQueueWaitMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueWaitMs()
+	})
+}
+
+// ClearQueueWaitMs clears the value of the "queue_wait_ms" field.
+func (u *UsageLogUpsertBulk) ClearQueueWaitMs() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueWaitMs()
+	})
+}
+
 // SetUserAgent sets the "user_agent" field.
 func (u *UsageLogUpsertBulk) SetUserAgent(v string) *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
@@ -4225,6 +4625,27 @@ func (u *UsageLogUpsertBulk) SetCacheTTLOverridden(v bool) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateCacheTTLOverridden() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateCacheTTLOverridden()
+	})
+}
+
+// SetQueueTiming sets the "queue_timing" field.
+func (u *UsageLogUpsertBulk) SetQueueTiming(v map[string]interface{}) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetQueueTiming(v)
+	})
+}
+
+// UpdateQueueTiming sets the "queue_timing" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateQueueTiming() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateQueueTiming()
+	})
+}
+
+// ClearQueueTiming clears the value of the "queue_timing" field.
+func (u *UsageLogUpsertBulk) ClearQueueTiming() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearQueueTiming()
 	})
 }
 

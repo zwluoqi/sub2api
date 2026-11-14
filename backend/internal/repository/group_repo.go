@@ -972,6 +972,13 @@ func (r *groupRepository) deleteCascade(ctx context.Context, id int64, requireEm
 		return nil, err
 	}
 
+	// Soft deletion does not trigger the join table's ON DELETE CASCADE.
+	// Remove additional key bindings in this transaction so editing a key does
+	// not submit an inaccessible group left behind by the deletion.
+	if _, err := exec.ExecContext(ctx, "DELETE FROM api_key_groups WHERE group_id = $1", id); err != nil {
+		return nil, err
+	}
+
 	// 5. Soft-delete group itself.
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
@@ -1132,6 +1139,22 @@ func (r *groupRepository) BindAccountsToGroup(ctx context.Context, groupID int64
 	if err := lockLiveGroups(ctx, exec, []int64{groupID}); err != nil {
 		return err
 	}
+
+	// Account locks serialize bulk binding with a concurrently committed
+	// degradation action. Use a stable order for overlapping bulk operations.
+	accountIDs = uniquePositiveInt64s(accountIDs)
+	sort.Slice(accountIDs, func(i, j int) bool { return accountIDs[i] < accountIDs[j] })
+	allowedAccounts := make([]int64, 0, len(accountIDs))
+	for _, id := range accountIDs {
+		allowed, err := lockOAuthDegradationGroupBindings(ctx, exec, id, []int64{groupID})
+		if err != nil {
+			return err
+		}
+		if len(allowed) > 0 {
+			allowedAccounts = append(allowedAccounts, id)
+		}
+	}
+	accountIDs = allowedAccounts
 
 	// 使用 INSERT ... ON CONFLICT DO NOTHING 忽略已存在的绑定
 	_, err = exec.ExecContext(

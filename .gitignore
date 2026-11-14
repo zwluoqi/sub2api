@@ -135,7 +135,13 @@ deploy/docker-compose.override.yml
 vite.config.js
 user-traffic-pending/
 docs/*
+!docs/ai-ops-codex.md
+!docs/reauth-identity-validation.md
+!docs/openai-context-limit-errors.md
+!docs/openai-agent-continuation.md
+!docs/encrypted-agent-owner-policy.md
 !docs/stream-timing.md
+!docs/openai-sse-delivery.md
 !docs/user-traffic.md
 !docs/typesafe-content-audit.md
 !docs/multi-host-session-owner.md
@@ -145,15 +151,22 @@ docs/*
 !docs/anonymous-api-guard.md
 !docs/registration-email-alias-block.md
 !docs/openai-ws-sse-acceleration.md
+!docs/openai-ultrafast-billing.md
+!docs/openai-oauth-relay-fast-billing.md
+!docs/openai-ws-mode.md
+!docs/oauth-initial-ws.md
 !docs/openai-outbound-identity.md
 !docs/openai-2fa-dual-oauth.md
 !docs/openai-siwc.md
 !docs/admin-api-keys.md
 !docs/PAYMENT.md
 !docs/PAYMENT_CN.md
+!docs/easypay-confirmation-recovery.md
+!docs/BEPUSDT_PAYMENT.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
 !docs/PRISM_BRIDGE_RESEARCH_CN.md
+!docs/OPENAI_IMAGES_CODEX.md
 !docs/BATCH_IMAGE_MVP.md
 !docs/COMPOSITE_GROUPS.md
 !docs/PLUGIN_DEVELOPMENT.md
@@ -167,6 +180,7 @@ docs/*
 !docs/codex-credits.md
 !docs/account-token-guard.md
 !docs/priority-scheduling.md
+!docs/scheduler-publication-contention.md
 !docs/astra-account-scheduling.md
 !docs/legal/
 !docs/legal/*.md
@@ -207,6 +221,9 @@ issues/
 **/*.sealed
 
 !docs/astra-candy-beta.md
+!docs/api-key-model-policy.md
+!docs/api-key-long-context-control.md
+!docs/api-key-usage-date-range.md
 
 # PR screenshots belong in PR attachments; retain text evidence in docs/screenshots.
 !docs/screenshots/
@@ -220,3 +237,5 @@ issues/
 
 # Local macOS re-auth Worker runtime (ephemeral, never commit)
 tools/local-worker/
+
+!docs/key-risk-patrol.md

@@ -53,6 +53,54 @@ func (c *gatewayCache) SetSessionAccountID(ctx context.Context, groupID int64, s
 	return c.rdb.Set(ctx, key, accountID, ttl).Err()
 }
 
+var compareAndSwapSessionAccountScript = redis.NewScript(`
+local current = redis.call('GET', KEYS[1])
+if not current and ARGV[5] == '1' and #KEYS > 1 then
+  current = redis.call('GET', KEYS[2])
+end
+if current then
+  if not string.match(current, '^[1-9]%d*$') then
+    return redis.error_reply('invalid sticky account binding')
+  end
+  if current ~= ARGV[1] and current ~= ARGV[2] then
+    return 0
+  end
+end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+if #KEYS > 1 then
+  if ARGV[6] == '1' then
+    redis.call('SET', KEYS[2], ARGV[2], 'PX', ARGV[4])
+  else
+    redis.call('DEL', KEYS[2])
+  end
+end
+return 1
+`)
+
+// CompareAndSwapSessionAccountID advances both sticky hash formats atomically.
+// A stale waiter cannot replace a newer binding, and disabling legacy writes
+// removes the old fallback instead of allowing it to revive after primary TTL.
+func (c *gatewayCache) CompareAndSwapSessionAccountID(ctx context.Context, groupID int64, swap service.SessionAccountBindingSwap) (bool, error) {
+	if strings.TrimSpace(swap.SessionHash) == "" || swap.AccountID <= 0 || swap.ExpectedAccountID < 0 || swap.TTL.Milliseconds() <= 0 ||
+		(swap.WriteLegacy && swap.LegacySessionHash != "" && swap.LegacyTTL.Milliseconds() <= 0) {
+		return false, errors.New("invalid sticky account binding swap")
+	}
+	keys := []string{buildSessionKey(groupID, swap.SessionHash)}
+	if swap.LegacySessionHash != "" && swap.LegacySessionHash != swap.SessionHash {
+		keys = append(keys, buildSessionKey(groupID, swap.LegacySessionHash))
+	}
+	flag := func(enabled bool) string {
+		if enabled {
+			return "1"
+		}
+		return "0"
+	}
+	result, err := compareAndSwapSessionAccountScript.Run(ctx, c.rdb, keys,
+		swap.ExpectedAccountID, swap.AccountID, swap.TTL.Milliseconds(), swap.LegacyTTL.Milliseconds(),
+		flag(swap.ReadLegacy), flag(swap.WriteLegacy)).Int()
+	return result == 1, err
+}
+
 func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error {
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Expire(ctx, key, ttl).Err()
@@ -68,6 +116,97 @@ func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, ses
 func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error {
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// scanOpenAISessionBindings returns only session-hash -> account bindings.
+// Response continuation (openai:response:*) and response-owner
+// (openai:http-response-owner:*) entries are ownership state, not sticky
+// routing, and must survive an operator-triggered session rebalance.
+func (c *gatewayCache) scanOpenAISessionBindings(ctx context.Context, groupID int64) (map[string]int64, error) {
+	prefix := fmt.Sprintf("%s%d:openai:", stickySessionPrefix, groupID)
+	pattern := prefix + "*"
+	keys := make([]string, 0, 256)
+	var cursor uint64
+	for {
+		batch, next, err := c.rdb.Scan(ctx, cursor, pattern, 500).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, key := range batch {
+			if !strings.HasPrefix(key, prefix) {
+				continue
+			}
+			suffix := strings.TrimPrefix(key, prefix)
+			if strings.HasPrefix(suffix, "response:") || strings.HasPrefix(suffix, "http-response-owner:") {
+				continue
+			}
+			keys = append(keys, key)
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	out := make(map[string]int64, len(keys))
+	for start := 0; start < len(keys); start += 200 {
+		end := min(start+200, len(keys))
+		values, err := c.rdb.MGet(ctx, keys[start:end]...).Result()
+		if err != nil {
+			return nil, err
+		}
+		for index, value := range values {
+			text, ok := value.(string)
+			if !ok {
+				continue
+			}
+			accountID, err := strconv.ParseInt(text, 10, 64)
+			if err != nil || accountID <= 0 {
+				continue
+			}
+			out[keys[start+index]] = accountID
+		}
+	}
+	return out, nil
+}
+
+func (c *gatewayCache) CountStickySessionBindings(ctx context.Context, groupID int64) (map[int64]int, error) {
+	bindings, err := c.scanOpenAISessionBindings(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[int64]int, len(bindings))
+	for _, accountID := range bindings {
+		counts[accountID]++
+	}
+	return counts, nil
+}
+
+func (c *gatewayCache) ClearStickySessionBindings(ctx context.Context, groupID int64, accountIDs map[int64]struct{}) (int, error) {
+	bindings, err := c.scanOpenAISessionBindings(ctx, groupID)
+	if err != nil {
+		return 0, err
+	}
+	keys := make([]string, 0, len(bindings))
+	for key, accountID := range bindings {
+		// nil means "all bindings"; an explicit empty map means "none".
+		if accountIDs == nil {
+			keys = append(keys, key)
+			continue
+		}
+		if _, ok := accountIDs[accountID]; ok {
+			keys = append(keys, key)
+		}
+	}
+	deleted := 0
+	for start := 0; start < len(keys); start += 200 {
+		end := min(start+200, len(keys))
+		count, err := c.rdb.Del(ctx, keys[start:end]...).Result()
+		if err != nil {
+			return deleted, err
+		}
+		deleted += int(count)
+	}
+	return deleted, nil
 }
 
 var claimOpenAIResponsesSessionWindowScript = redis.NewScript(`

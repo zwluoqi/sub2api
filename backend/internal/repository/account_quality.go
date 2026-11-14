@@ -22,8 +22,12 @@ func (r *scheduledTestPlanRepository) ListQualityPlans(ctx context.Context) ([]*
 	return scanPlans(rows, true)
 }
 func (r *scheduledTestPlanRepository) TriggerQuality(ctx context.Context, id int64) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE scheduled_test_plans SET next_run_at=NOW(), updated_at=NOW()
- WHERE id=$1 AND enabled AND pelican_config->'quality' IS NOT NULL AND (running_until IS NULL OR running_until<NOW())`, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE scheduled_test_plans SET next_run_at=NOW(), updated_at=NOW(),
+ pelican_config=jsonb_set(pelican_config, '{_manual_quality_run}', 'true'::jsonb)
+ WHERE id=$1 AND enabled AND pelican_config->'quality' IS NOT NULL AND (running_until IS NULL OR running_until<NOW())
+ AND NOT EXISTS (SELECT 1 FROM account_quality_states rest WHERE rest.plan_id=scheduled_test_plans.id
+ AND COALESCE((pelican_config->'quality'->>'retest_rest_minutes')::int,0)>0
+ AND (rest.state->>'retest_after')::timestamptz>NOW())`, id)
 	if err != nil {
 		return err
 	}
@@ -32,7 +36,7 @@ func (r *scheduledTestPlanRepository) TriggerQuality(ctx context.Context, id int
 		return err
 	}
 	if n != 1 {
-		return fmt.Errorf("plan must be enabled and idle")
+		return fmt.Errorf("plan must be enabled, idle and outside its quality retest rest period")
 	}
 	return nil
 }
@@ -45,6 +49,7 @@ type qualityGroup struct {
 	AllowedModels json.RawMessage `json:"allowed_models"`
 }
 type qualityState struct {
+	RetestAfter *time.Time `json:"retest_after,omitempty"`
 	// Transaction-local evidence, copied to the result even when restore rolls
 	// back. Never persist diagnostics as ownership or use them as a restore guard.
 	RestoreDiagnostic *service.QualityRestoreDiagnostic `json:"-"`
@@ -86,7 +91,65 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		return "", err
 	}
 	defer func() { _ = tx.Rollback() }()
+	commit := false
+	action, err := applyQualityOutcomeTx(ctx, tx, plan, until, outcome, &commit)
+	if err != nil || !commit {
+		return action, err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return action, nil
+}
+
+func qualityActionRollsBack(action string) bool {
+	switch action {
+	case "action_conflict", "restore_conflict", "stale_run", "account_deleted":
+		return true
+	}
+	return false
+}
+
+// Caller commits only complete actions; rejected partial transitions roll back.
+func applyQualityOutcomeTx(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, until time.Time, outcome string, commit *bool) (string, error) {
+	action, err := applyQualityOutcomeWithoutRestTx(ctx, tx, plan, until, outcome, commit)
+	if err != nil || !*commit || qualityActionRollsBack(action) || plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil {
+		return action, err
+	}
+	q := plan.PelicanConfig.Quality
+	if plan.PelicanConfig.QuestionKind == service.QualityRandomQuestionKind && !plan.QualityBatchEvaluated {
+		return action, nil
+	}
+	failed := outcome == "failed"
+	if q.UsesModelResults() && len(plan.QualityModelOutcomes) > 0 {
+		failed = false
+		for _, modelOutcome := range plan.QualityModelOutcomes {
+			failed = failed || modelOutcome == "failed"
+		}
+	}
+	if !failed || !q.UsesRetestRest() || q.RetestRestMinutes <= 0 {
+		return action, nil
+	}
+	// The plan lock acquired by the action also fences claims on other nodes.
+	// Only an actual owned quarantine starts the rest period. Unknown verdicts,
+	// transport failures and protection applied before a 5xx probe do not.
+	_, err = tx.ExecContext(ctx, `WITH resting AS (
+ UPDATE account_quality_states SET state=jsonb_set(state,'{retest_after}',
+ to_jsonb(clock_timestamp()+make_interval(mins => $2::int)))
+ WHERE plan_id=$1 AND state->>'action' IN ('remove_groups','disable_scheduling','remove_models','isolate_models')
+ RETURNING (state->>'retest_after')::timestamptz AS deadline
+ ) UPDATE scheduled_test_plans SET next_run_at=GREATEST(next_run_at,resting.deadline)
+ FROM resting WHERE id=$1`, plan.ID, q.RetestRestMinutes)
+	if err != nil {
+		*commit = false
+	}
+	return action, err
+}
+
+func applyQualityOutcomeWithoutRestTx(ctx context.Context, tx *sql.Tx, plan *service.ScheduledTestPlan, until time.Time, outcome string, commit *bool) (string, error) {
+	plan.QualityRestoreDiagnostic = nil
 	var valid bool
+	var err error
 	err = tx.QueryRowContext(ctx, `SELECT enabled AND updated_at=$2 AND running_until=$3 AND running_until>NOW()
  FROM scheduled_test_plans WHERE id=$1 FOR UPDATE`, plan.ID, plan.UpdatedAt, until).Scan(&valid)
 	if err == sql.ErrNoRows || (err == nil && !valid) {
@@ -95,15 +158,22 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 	if err != nil {
 		return "", err
 	}
+	// A stale run needs only its lease/version, not an execution config. Keep
+	// that guard before reading optional snapshots or touching account state.
+	if plan.PelicanConfig == nil || plan.PelicanConfig.Quality == nil {
+		return "inconclusive", nil
+	}
+	if plan.PelicanConfig.QuestionKind == service.QualityRandomQuestionKind && !plan.QualityBatchEvaluated && outcome != "pending" {
+		outcome = "inconclusive"
+		plan.QualityModelOutcomes = nil
+	}
 
 	if plan.PelicanConfig.Quality.Action == service.QualityActionOpenAITwoFAAdmission {
 		action, applyErr := applyOpenAITwoFAAdmissionOutcome(ctx, tx, plan, until, outcome)
 		if applyErr != nil {
 			return "", applyErr
 		}
-		if err := tx.Commit(); err != nil {
-			return "", err
-		}
+		*commit = true
 		return action, nil
 	}
 
@@ -129,9 +199,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		if _, err = tx.ExecContext(ctx, `DELETE FROM account_quality_states WHERE plan_id=$1`, plan.ID); err != nil {
 			return "", err
 		}
-		if err = tx.Commit(); err != nil {
-			return "", err
-		}
+		*commit = true
 		return "observed", nil
 	}
 	var version time.Time
@@ -148,6 +216,23 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 	// arrives during a probe invalidates that probe even across replicas.
 	if state.Quality5xxEpisode != plan.Quality5xxEpisode {
 		return "stale_run", nil
+	}
+	if plan.QualityBatchEvaluated && len(plan.QualityBatchModels) > 0 {
+		var mapping []byte
+		account := &service.Account{}
+		if err = tx.QueryRowContext(ctx, `SELECT platform,COALESCE(credentials->'model_mapping','{}'::jsonb) FROM accounts WHERE id=$1`, plan.AccountID).Scan(&account.Platform, &mapping); err != nil {
+			return "", err
+		}
+		var models map[string]any
+		if err = json.Unmarshal(mapping, &models); err != nil {
+			return "", err
+		}
+		account.Credentials = map[string]any{"model_mapping": models}
+		for model, mapped := range plan.QualityBatchModels {
+			if mapped == "" || account.GetMappedModel(model) != mapped {
+				return "stale_run", nil
+			}
+		}
 	}
 	defer func() {
 		diagnostic := plan.QualityRestoreDiagnostic
@@ -191,9 +276,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		if action == "action_conflict" || action == "restore_conflict" {
 			return action, nil
 		}
-		if err = tx.Commit(); err != nil {
-			return "", err
-		}
+		*commit = true
 		return action, nil
 	}
 	// 已被本规则开过 BPS 的账号即便规则后来改了动作，也由 BPS 分支负责恢复。
@@ -206,9 +289,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		if err != nil {
 			return "", err
 		}
-		if err = tx.Commit(); err != nil {
-			return "", err
-		}
+		*commit = true
 		return action, nil
 	}
 	if state.Action == service.QualityActionEnableBPS || (state.Action == "" && q.Action == service.QualityActionEnableBPS) {
@@ -216,9 +297,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		if err != nil {
 			return "", err
 		}
-		if err = tx.Commit(); err != nil {
-			return "", err
-		}
+		*commit = true
 		return action, nil
 	}
 	if state.Action == "" && state.FailureStreak > 0 {
@@ -313,9 +392,7 @@ func (r *scheduledTestPlanRepository) ApplyQualityOutcome(ctx context.Context, p
 		}
 	}
 
-	if err = tx.Commit(); err != nil {
-		return "", err
-	}
+	*commit = true
 	return action, nil
 }
 func qualityGroups(ctx context.Context, tx *sql.Tx, accountID int64) ([]byte, error) {

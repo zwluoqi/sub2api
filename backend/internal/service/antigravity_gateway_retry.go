@@ -539,6 +539,9 @@ urlFallbackLoop:
 				return nil, err
 			}
 
+			if err := checkAPIKeyLongContextBeforeForward(p.ctx, p.c, nil, p.body, extractOpenAICodexTicketModel(p.body)); err != nil {
+				return nil, err
+			}
 			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
 			s.rateLimitService.observeQualityResponse(upstreamReq.Context(), p.account, resp, err)
 			if err == nil && resp == nil {
@@ -886,7 +889,7 @@ func (s *AntigravityGatewayService) setAntigravityModelRateLimits(ctx context.Co
 	if account == nil || repo == nil {
 		return false
 	}
-	keys := antigravityModelRateLimitKeys(modelName)
+	keys := antigravityModelRateLimitKeys(account, modelName)
 	if len(keys) == 0 {
 		return false
 	}

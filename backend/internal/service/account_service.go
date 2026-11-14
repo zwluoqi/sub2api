@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -244,8 +243,8 @@ func (s *AccountService) Create(ctx context.Context, req CreateAccountRequest) (
 	if err := ValidateModelMappingMode(req.Credentials); err != nil {
 		return nil, err
 	}
-	if req.Platform == PlatformTypeSafe && req.Type != AccountTypeAPIKey {
-		return nil, errors.New("typesafe accounts only support apikey credentials")
+	if (req.Platform == PlatformTypeSafe || req.Platform == PlatformMistral) && req.Type != AccountTypeAPIKey {
+		return nil, fmt.Errorf("%s accounts only support apikey credentials", req.Platform)
 	}
 	// 验证分组是否存在（如果指定了分组）
 	if len(req.GroupIDs) > 0 {
@@ -339,6 +338,7 @@ func (s *AccountService) ListByGroup(ctx context.Context, groupID int64) ([]Acco
 
 // Update 更新账号
 func (s *AccountService) Update(ctx context.Context, id int64, req UpdateAccountRequest) (*Account, error) {
+	ctx = withAccountStatusPreservation(ctx, req.Status == nil)
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get account: %w", err)

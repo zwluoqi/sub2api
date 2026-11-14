@@ -418,6 +418,9 @@ type ResponsesOutput struct {
 	Arguments string `json:"arguments,omitempty"`
 	// 来源为 namespace 子工具时的归属命名空间（codex 按 namespace+name 路由该调用）。
 	Namespace string `json:"namespace,omitempty"`
+	// Preserve the upstream encryption marker, including explicit null/[];
+	// omitting it can make sealed arguments appear to be plaintext.
+	EncryptedFunctionArgs json.RawMessage `json:"encrypted_function_args,omitempty"`
 
 	// type=custom_tool_call（custom/freeform 工具，input 为自由文本）
 	Input string `json:"input,omitempty"`
@@ -430,7 +433,11 @@ type ResponsesOutput struct {
 // execution 固定为 "client"（codex 的必填字段，非 client 的调用会被静默忽略），
 // arguments 是 JSON 对象而非 function_call 语义下的字符串。reasoning 项始终提供
 // summary 数组（关闭摘要时为空），其余类型走默认结构体序列化。
+// message 项复用流式 wire 编码，保留 annotations 与 refusal 字段。
 func (o ResponsesOutput) MarshalJSON() ([]byte, error) {
+	if o.Type == "message" {
+		return json.Marshal(responsesItemWire(&o))
+	}
 	type responsesOutputAlias ResponsesOutput
 	if o.Type == "reasoning" {
 		summary := o.Summary

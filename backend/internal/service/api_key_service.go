@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
@@ -64,12 +65,17 @@ const (
 // 若编辑 Key 时无条件整行回写，并发累计的配额与限流计数就会被旧快照覆盖。
 // 因此调用方必须显式声明要改的列。
 type APIKeyUpdateFields struct {
-	ConcurrencyLimit bool
-	Name             bool
-	Status           bool
-	Quota            bool
-	GroupID          bool
-	ExpiresAt        bool
+	// Administrator-only policy fields have independent masks to preserve concurrent edits.
+	ModelMapping      bool
+	ReasoningEffort   bool
+	ContextTokenLimit bool
+	AllowLongContext  bool
+	ConcurrencyLimit  bool
+	Name              bool
+	Status            bool
+	Quota             bool
+	GroupID           bool
+	ExpiresAt         bool
 	// QuotaUsed 仅供"重置配额用量"路径声明；常规计费走 IncrementQuotaUsed。
 	QuotaUsed bool
 	// RateLimits 覆盖 rate_limit_5h / _1d / _7d 三个阈值。
@@ -77,7 +83,10 @@ type APIKeyUpdateFields struct {
 	// RateLimitUsage 覆盖 usage_5h/_1d/_7d 与三个窗口起点，
 	// 仅供"重置限流用量"路径声明；常规计费走 IncrementRateLimitUsage。
 	RateLimitUsage bool
-	// IPRules 覆盖 ip_whitelist 与 ip_blacklist。
+	// IPWhitelist / IPBlacklist only write the explicitly requested ACL column.
+	IPWhitelist bool
+	IPBlacklist bool
+	// IPRules retains the legacy opt-in to write both ACL columns.
 	IPRules bool
 }
 
@@ -293,6 +302,9 @@ type RateLimitCacheInvalidator interface {
 }
 
 type APIKeyService struct {
+	groupAntiDistillation     *GroupAntiDistillationService
+	autoCredit                AutoCreditRepository
+	autoCreditBilling         *BillingCacheService
 	balanceRejectionNotifier  BalanceRejectionNotifier
 	localAuth                 *RegionalAuthReader
 	regionalAuthRuntime       *regionalSchedulerRuntime
@@ -589,6 +601,7 @@ func (s *APIKeyService) Create(ctx context.Context, userID int64, req CreateAPIK
 		GroupIDs:         groupIDs,
 		GroupID:          req.GroupID,
 		Status:           StatusActive,
+		AllowLongContext: true,
 		IPWhitelist:      req.IPWhitelist,
 		IPBlacklist:      req.IPBlacklist,
 		Quota:            req.Quota,
@@ -775,7 +788,8 @@ func (s *APIKeyService) GetByKey(ctx context.Context, key string) (*APIKey, erro
 	if s.cfg != nil && s.cfg.Runtime.Role == config.RuntimeRoleGateway && s.cfg.Runtime.RegionalAuthFile != "" {
 		return nil, ErrRegionalAuthUnavailable
 	}
-	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
+	// Reject malformed credentials before any cache or PostgreSQL lookup.
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes || !utf8.ValidString(key) {
 		return nil, ErrAPIKeyNotFound
 	}
 	cacheKey := s.authCacheKey(key)
@@ -840,7 +854,7 @@ func (s *APIKeyService) GetByKeyUncached(ctx context.Context, key string) (*APIK
 	if s.cfg != nil && s.cfg.Runtime.Role == config.RuntimeRoleGateway && s.cfg.Runtime.RegionalAuthFile != "" {
 		return nil, ErrRegionalAuthUnavailable
 	}
-	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes {
+	if len(key) == 0 || len(key) > MaxAPIKeyCredentialBytes || !utf8.ValidString(key) {
 		return nil, ErrAPIKeyNotFound
 	}
 	apiKey, err := s.lookupAPIKeyForAuth(ctx, key)
@@ -969,11 +983,11 @@ func (s *APIKeyService) Update(ctx context.Context, id int64, userID int64, req 
 	// 更新 IP 限制（nil 不修改，空数组清空设置）
 	if req.IPWhitelist != nil {
 		apiKey.IPWhitelist = *req.IPWhitelist
-		fields.IPRules = true
+		fields.IPWhitelist = true
 	}
 	if req.IPBlacklist != nil {
 		apiKey.IPBlacklist = *req.IPBlacklist
-		fields.IPRules = true
+		fields.IPBlacklist = true
 	}
 
 	// Update rate limit configuration

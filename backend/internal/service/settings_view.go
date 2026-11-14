@@ -221,10 +221,12 @@ type SystemSettings struct {
 	PrismBrowserAPIKey                   string `json:"-"`
 
 	// Grok model mapping policy (admin settings; empty mapping falls back to these).
-	GrokDefaultTextModel           string `json:"grok_default_text_model"`
-	GrokCrossClientModelMapEnabled bool   `json:"grok_cross_client_model_map_enabled"`
-	GrokDefaultBaseURLMode         string `json:"grok_default_base_url_mode"`
-	GrokVideoSourceURLEnabled      bool   `json:"grok_video_source_url_enabled"`
+	GrokDefaultTextModel                 string `json:"grok_default_text_model"`
+	GrokCrossClientModelMapEnabled       bool   `json:"grok_cross_client_model_map_enabled"`
+	GrokDefaultBaseURLMode               string `json:"grok_default_base_url_mode"`
+	GrokVideoSourceURLEnabled            bool   `json:"grok_video_source_url_enabled"`
+	OpenAI409OmitEncryptedHistoryEnabled bool   `json:"openai_409_omit_encrypted_history_enabled"`
+	OpenAI400OmitEncryptedHistoryEnabled bool   `json:"openai_400_omit_encrypted_history_enabled"`
 
 	// Available Channels feature (user-facing aggregate view)
 	AvailableChannelsEnabled bool `json:"available_channels_enabled"`
@@ -330,9 +332,12 @@ type SystemSettings struct {
 	OpenAIAdvancedSchedulerEffectiveWeightSessionSticky    string
 
 	// 余额不足提醒
-	BalanceLowNotifyEnabled     bool
-	BalanceLowNotifyThreshold   float64
-	BalanceLowNotifyRechargeURL string
+	BalanceForecastEnabled          bool
+	BalanceForecastThresholdHours   float64
+	BalanceForecastMaxNotifications int
+	BalanceLowNotifyEnabled         bool
+	BalanceLowNotifyThreshold       float64
+	BalanceLowNotifyRechargeURL     string
 
 	// 订阅到期提醒
 	SubscriptionExpiryNotifyEnabled bool
@@ -349,6 +354,7 @@ type SystemSettings struct {
 
 	// 允许终端用户在用量页查看自己的失败请求
 	AllowUserViewErrorRequests  bool
+	SmartOpsHiddenMenuItems     []string // Sidebar presentation only; does not disable jobs or routes.
 	RequestCaptureEnabled       bool
 	RequestCaptureQuotaMiB      int64
 	RequestCaptureRetentionDays int
@@ -474,6 +480,7 @@ type PublicSettings struct {
 
 	// Support tickets ("网站工单") feature switch
 	SupportTicketEnabled bool `json:"support_ticket_enabled"`
+	LotteryEnabled       bool `json:"lottery_enabled"`
 
 	// Affiliate (邀请返利) feature toggle
 	AffiliateEnabled bool `json:"affiliate_enabled"`

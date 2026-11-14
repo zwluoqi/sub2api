@@ -17,21 +17,23 @@ func TestPriorityScoringExperienceAndCost(t *testing.T) {
 	c := DefaultPrioritySchedulingConfig()
 	c.TargetTTFTMs = 3000
 	c.Mode = "profit"
-	good := PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10}
+	good := withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10})
 	cheap := scorePriorityCandidate(c, priorityCandidate(1, 0.2, 10), good, time.Now())
 	expensive := scorePriorityCandidate(c, priorityCandidate(2, 1, 10), good, time.Now())
 	require.Greater(t, cheap.Score, expensive.Score)
 	require.Equal(t, "eligible", cheap.Tier)
 	slow := good
 	slow.P90TTFTMs = 5000
+	slow = withAccountPerformanceFixture(slow)
 	require.Equal(t, "degraded", scorePriorityCandidate(c, priorityCandidate(1, 0, 10), slow, time.Now()).Tier)
 	bad := good
 	bad.QualityPassed = 5
+	bad = withAccountPerformanceFixture(bad)
 	require.Equal(t, "degraded", scorePriorityCandidate(c, priorityCandidate(1, 0, 10), bad, time.Now()).Tier)
 	require.Equal(t, "degraded", scorePriorityCandidate(c, priorityCandidate(1, 0, 90), good, time.Now()).Tier)
 	noLoad := priorityCandidate(1, 0, 0)
 	noLoad.loadKnown = false
-	require.Equal(t, "insufficient", scorePriorityCandidate(c, noLoad, good, time.Now()).Tier)
+	require.Equal(t, "eligible", scorePriorityCandidate(c, noLoad, good, time.Now()).Tier)
 	missing := scorePriorityCandidate(c, priorityCandidate(1, 0.2, 10), PrioritySchedulingSignal{}, time.Now())
 	require.Equal(t, "insufficient", missing.Tier)
 	require.Contains(t, missing.Reasons, "latency_insufficient")
@@ -90,7 +92,7 @@ func TestPrioritySchedulingOrderingAndFallback(t *testing.T) {
 	c.TargetTTFTMs = 3000
 	c.Enabled = true
 	c.Mode = "profit"
-	r := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: {Samples: 20, P90TTFTMs: 6000, QualityPassed: 10, QualitySamples: 10}, 2: {Samples: 20, P90TTFTMs: 1000, QualityPassed: 10, QualitySamples: 10}}}
+	r := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 6000, QualityPassed: 10, QualitySamples: 10}), 2: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 1000, QualityPassed: 10, QualitySamples: 10})}}
 	gateway := priorityGateway(c, r)
 	scheduler, ok := newDefaultOpenAIAccountScheduler(gateway, nil).(*defaultOpenAIAccountScheduler)
 	require.True(t, ok)
@@ -109,6 +111,8 @@ func TestPrioritySchedulingOrderingAndFallback(t *testing.T) {
 	require.Equal(t, int64(1), order[2].account.ID)
 	snap := gateway.PrioritySchedulingSnapshot()
 	require.True(t, snap.HistoryReady)
+	require.Equal(t, PriorityLatencyDeprioritize, snap.LatencyPenaltyMode)
+	require.False(t, snap.LatencyFallback)
 	require.Equal(t, int64(2), snap.Candidates[0].AccountID)
 	for _, other := range []OpenAIAccountScheduleRequest{{Platform: PlatformOpenAI, RequestedModel: "m", RequiredImageCapability: OpenAIImagesCapabilityNative}, {Platform: PlatformGemini, RequestedModel: "m", UseUpstreamTokenCost: true}, {Platform: PlatformOpenAI, RequestedModel: "m"}} {
 		p := openAIAccountLoadPlan{candidates: candidates}
@@ -208,7 +212,7 @@ func TestPrioritySchedulingGatewayEntryAndDisable(t *testing.T) {
 	c.TargetTTFTMs = 3000
 	c.Enabled = true
 	c.Mode = "profit"
-	reader := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: {Samples: 20, P90TTFTMs: 8000, QualityPassed: 10, QualitySamples: 10}, 2: {Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10}}}
+	reader := &priorityReaderStub{signal: map[int64]PrioritySchedulingSignal{1: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 8000, QualityPassed: 10, QualitySamples: 10}), 2: withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10})}}
 	svc := priorityGateway(c, reader)
 	candidates := []openAIAccountCandidateScore{priorityCandidate(1, 0.01, 0), priorityCandidate(2, 1, 0)}
 	accounts := make([]Account, 0, 2)
@@ -238,7 +242,7 @@ func TestPrioritySchedulingGatewayEntryAndDisable(t *testing.T) {
 
 func TestPriorityLoadFactorDoesNotHideActualConcurrency(t *testing.T) {
 	c := DefaultPrioritySchedulingConfig()
-	good := PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10}
+	good := withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10})
 	a := priorityCandidate(1, 1, 90)
 	a.account.Concurrency = 100
 	a.loadInfo.CurrentConcurrency = 90
@@ -276,7 +280,7 @@ func TestPriorityOAuthProfitUsesUserChargeAndTheoreticalCost(t *testing.T) {
 	a := priorityCandidate(1, 0.001, 0)
 	a.account.Type = AccountTypeOAuth
 	a.account.Extra[AccountCostMultiplierExtraKey] = 0.1
-	signal := PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10, ProfitSamples: 10, Revenue: 10, BaseCost: 60}
+	signal := withAccountPerformanceFixture(PrioritySchedulingSignal{Samples: 20, P90TTFTMs: 500, QualityPassed: 10, QualitySamples: 10, ProfitSamples: 10, Revenue: 10, BaseCost: 60})
 	score := scorePriorityCandidate(c, a, signal, time.Now())
 	require.Equal(t, "usage", score.EconomicsSource)
 	require.Equal(t, 4.0, *score.Profit)

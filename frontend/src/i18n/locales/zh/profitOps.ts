@@ -30,8 +30,15 @@ export default {
   "desc": "降序",
   "asc": "升序",
   "apply": "应用筛选",
+  "today": "今天",
+  "yesterday": "昨天",
+  "thisWeek": "本周",
+  "lastWeek": "上周",
   "last24h": "近24小时",
-  "loading": "读取中…",
+  "last48h": "近48小时",
+  "thisMonth": "本月",
+  "lastMonth": "上月",
+  "loading": "正在汇总，请稍候；数据较多时可能需要几分钟。",
   "queried": "读取时间",
   "summary": "筛选范围合计",
   "requests": "请求记录数",
@@ -57,7 +64,7 @@ export default {
   "duration": "总耗时 P90 (ms)",
   "samples": "TTFT 有效样本",
   "unknown": "未知",
-  "latencyNote": "延迟沿用持久化转发 TTFT，仅统计有用量证据且首 token 时间为正的流式记录；不是纯上游语义延迟。总耗时来自 duration_ms。没有完整失败请求分母，不计算请求错误率。",
+  "latencyNote": "延迟沿用持久化旧 first_token_ms / duration_ms，只统计有 token/费用证据且计时有效的记录。旧计时口径依协议不同，passthrough 和 bridge 可能已含准入等待。这是服务端观察值，不是客户端 E2E。另增的含排队指标按测量来源单独统计，排除历史未测量记录。用量日志仍缺少完整失败请求分母。",
   "previous": "上一页",
   "next": "下一页",
   "accountBasis": "逐账号估算基准",
@@ -75,5 +82,6 @@ export default {
   "errorNote": "留存错误日志仅表示当前账号集合中的诊断记录，排除 count_tokens；不是完整请求失败率。5xx 不能证明降智。仅列前 20 个错误分类。",
   "errorRecords": "日志条数",
   "queryFailed": "查询失败，请重试；未将失败显示为零。",
-  "invalidRange": "请选择不超过31天、结束晚于开始的有效时间范围。"
+  "queryTimeout": "本次统计耗时过长，未能完成，请稍后重试；未将失败显示为零。",
+  "invalidRange": "请选择不超过32天、结束晚于开始的有效时间范围。"
 }

@@ -73,6 +73,7 @@ type JWTClaims struct {
 
 // AuthService 认证服务
 type AuthService struct {
+	lottery               *LotteryService
 	entClient             *dbent.Client
 	userRepo              UserRepository
 	redeemRepo            RedeemCodeRepository
@@ -1032,6 +1033,9 @@ func (s *AuthService) postAuthUserBootstrap(ctx context.Context, user *User, sig
 	if touchLogin {
 		s.touchUserLogin(ctx, user.ID)
 	}
+	if err := s.lottery.RegisterInvitedUser(ctx, user.ID); err != nil {
+		logger.LegacyPrintf("service.auth", "[Auth] Lottery invitation binding pending: user_id=%d err=%v", user.ID, err)
+	}
 }
 
 func (s *AuthService) updateUserSignupSource(ctx context.Context, userID int64, signupSource string) {
@@ -1879,10 +1883,15 @@ func (s *AuthService) RefreshTokenPair(ctx context.Context, refreshToken string)
 		}
 	}
 
-	// Token轮转：立即使旧Token失效
-	if err := s.refreshTokenCache.DeleteRefreshToken(ctx, tokenHash); err != nil {
-		logger.LegacyPrintf("service.auth", "[Auth] Failed to delete old refresh token: %v", err)
-		// 继续处理，不影响主流程
+	// Token轮转：原子消费旧Token。并发刷新时只有一个请求能成功，
+	// 其余请求拿到 ErrRefreshTokenNotFound，避免同一个 Refresh Token 被兑换两次。
+	if _, err := s.refreshTokenCache.ConsumeRefreshToken(ctx, tokenHash); err != nil {
+		if errors.Is(err, ErrRefreshTokenNotFound) {
+			logger.LegacyPrintf("service.auth", "[Auth] Refresh token already consumed, possible reuse attack")
+			return nil, ErrRefreshTokenInvalid
+		}
+		logger.LegacyPrintf("service.auth", "[Auth] Failed to consume old refresh token: %v", err)
+		return nil, ErrServiceUnavailable
 	}
 
 	// 生成新的Token对，保持同一个家族ID
